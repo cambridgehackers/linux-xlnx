@@ -15,8 +15,10 @@
 #define __XYLON_BB_DATA_H__
 
 
+#include <linux/ion.h>
 #include <linux/wait.h>
 #include <linux/mutex.h>
+#include <linux/miscdevice.h>
 #include "logicvc.h"
 
 
@@ -34,7 +36,6 @@
 #define BB_RESERVED_0x100    0x100
 
 
-#define DEBUG
 #ifdef DEBUG
 #define driver_devel(format, ...) \
 	do { \
@@ -46,16 +47,8 @@
 
 #define BB_NAME_SZ 20
 
-struct xylonbb_info {
-        u32 flags;
-        char id[BB_NAME_SZ];
-};
-
 struct xylonbb_registers {
 	u32 dtype_reg;
-	u32 bg_reg;
-	u32 unused_reg[3];
-	u32 int_mask_reg;
 };
 
 struct xylonbb_register_access {
@@ -65,16 +58,14 @@ struct xylonbb_register_access {
 		(u32 value, void *reg_base_virt, unsigned long offset);
 };
 
-struct xylonbb_sync {
-	wait_queue_head_t wait;
-	unsigned int cnt;
-};
-
 struct xylonbb_common_data {
 	struct device *dev;
+        struct miscdevice misc;
+        struct ion_device *ion_device;
+        struct ion_client *ion_client;
 	struct mutex irq_mutex;
-	struct xylonbb_register_access reg_access;
-	struct xylonbb_registers *reg_list;
+        dma_addr_t reg_base_phys;
+        void      *reg_base_virt;
 	unsigned short xylonbb_flags;
 	unsigned char xylonbb_irq;
 	unsigned char xylonbb_use_ref;
