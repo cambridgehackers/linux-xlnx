@@ -39,7 +39,7 @@
 #ifdef DEBUG
 #define driver_devel(format, ...) \
 	do { \
-		printk(KERN_INFO format, ## __VA_ARGS__); \
+		printk(KERN_DEBUG format, ## __VA_ARGS__); \
 	} while (0)
 #else
 #define driver_devel(format, ...)

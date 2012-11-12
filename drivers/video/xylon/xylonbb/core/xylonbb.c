@@ -37,37 +37,6 @@
 
 static char *xylonbb_mode_option;
 
-#define LOGIBITBLIT_CTRL0_ROFF 0x0000
-#define LOGIBITBLIT_CTRL0_SRCLIN (1 << 0)
-#define LOGIBITBLIT_CTRL0_DSTLIN (1 << 1)
-#define LOGIBITBLIT_CTRL0_START  (1 << 7)
-#define LOGIBITBLIT_CTRL0_BUSY   (1 << 7)
-#define LOGIBITBLIT_CTRL0_RESET  (1 << 8)
-
-#define LOGIBITBLIT_CTRL1_ROFF 0x0004
-#define LOGIBITBLIT_CTRL1_COLFMT_ARGB8888 6
-
-#define LOGIBITBLIT_ROP_ROFF   0x0008
-#define LOGIBITBLIT_ROP_PD_S_OVER_D 0x0
-#define LOGIBITBLIT_ROP_PD_FLOOR 0x10
-
-#define LOGIBITBLIT_OP_ROFF  0x000C
-#define LOGIBITBLIT_OP_PATTERN_FILL 0x7
-#define LOGIBITBLIT_OP_PORTER_DUFF  0x8
-
-#define LOGIBITBLIT_SRC_ADDR_ROFF   0x0010
-#define LOGIBITBLIT_DST_ADDR_ROFF   0x0014
-#define LOGIBITBLIT_SRC_STRIPE_ROFF 0x0018
-#define LOGIBITBLIT_DST_STRIPE_ROFF 0x001C
-#define LOGIBITBLIT_XWIDTH_ROFF     0x0020
-#define LOGIBITBLIT_YWIDTH_ROFF     0x0024
-#define LOGIBITBLIT_BG_COL_ROFF     0x0028
-#define LOGIBITBLIT_FG_COL_ROFF     0x002C
-#define LOGIBITBLIT_GLB_ALPHA_ROFF  0x0030
-#define LOGIBITBLIT_IP_VERSION_ROFF 0x0034
-#define LOGIBITBLIT_INT_STATUS_ROFF 0x0038
-#define LOGIBITBLIT_INT_ENABLE_ROFF 0x003C
-
 static irqreturn_t xylonbb_isr(int irq, void *dev_id)
 {
 	struct xylonbb_common_data *common_data = (struct xylonbb_common_data *)dev_id;
@@ -105,6 +74,13 @@ static int xylonbb_open(struct inode *inode, struct file *filep)
                      readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF));
         driver_devel("%s int_enable %08x\n", __func__,
                      readl(common_data->reg_base_virt + LOGIBITBLIT_INT_ENABLE_ROFF));
+        writel(LOGIBITBLIT_CTRL0_RESET,
+               common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+        writel(0,
+               common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+        driver_devel("%s post reset ctrl0 %08x int_status %08x\n", __func__,
+                     readl(common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF),
+                     readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF));
 	return 0;
 }
 
@@ -133,14 +109,8 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
 			return -EFAULT;
 
                 src_ion_handle = ion_import_dma_buf(ion_client, params.src_dma_buf);
-                driver_devel("%s:%d src_dma_buf=%d src_ion_handle=%p\n",
-                       __func__, __LINE__, params.src_dma_buf, src_ion_handle);
                 dst_ion_handle = ion_import_dma_buf(ion_client, params.dst_dma_buf);
-                driver_devel("%s:%d dst_dma_buf=%d dst_ion_handle=%p\n",
-                       __func__, __LINE__, params.dst_dma_buf, dst_ion_handle);
                 status = ion_phys(ion_client, src_ion_handle, &src_dma_addr, &src_dma_len);
-                driver_devel("%s:%d status=%d src_dma_addr=%0lx\n",
-                       __func__, __LINE__, status, src_dma_addr);
                 if (!src_dma_addr)
                         return status;
 
@@ -150,31 +120,54 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
                 if (!dst_dma_addr)
                         return status;
 
-                writel(LOGIBITBLIT_ROP_PD_S_OVER_D, 
+                driver_devel("%s:%d src_dma_addr=%0lx dst_dma_addr=%0lx\n",
+                       __func__, __LINE__, src_dma_addr, dst_dma_addr);
+                dst_dma_addr += params.dst_offset;
+                src_dma_addr += params.src_offset;
+                driver_devel("%s:%d with offset src_dma_addr=%0lx dst_dma_addr=%0lx\n",
+                       __func__, __LINE__, src_dma_addr, dst_dma_addr);
+                driver_devel("%s:%d src_stride %d dst_stride %d\n",
+                       __func__, __LINE__, params.src_stripe, params.dst_stripe);
+                driver_devel("%s:%d columns %d rows %d\n",
+                       __func__, __LINE__, params.num_columns, params.num_rows);
+
+                writel(params.rop, 
                        common_data->reg_base_virt + LOGIBITBLIT_ROP_ROFF);
-                writel(LOGIBITBLIT_OP_PORTER_DUFF, 
+                writel(params.op, 
                        common_data->reg_base_virt + LOGIBITBLIT_OP_ROFF);
 
                 writel(src_dma_addr, common_data->reg_base_virt + LOGIBITBLIT_SRC_ADDR_ROFF);
-                writel(params.src_stripe, common_data->reg_base_virt + LOGIBITBLIT_SRC_STRIPE_ROFF);
+                writel(params.src_stripe,
+                       common_data->reg_base_virt + LOGIBITBLIT_SRC_STRIPE_ROFF);
                 writel(dst_dma_addr, common_data->reg_base_virt + LOGIBITBLIT_DST_ADDR_ROFF);
-                writel(params.dst_stripe, common_data->reg_base_virt + LOGIBITBLIT_DST_STRIPE_ROFF);
+                writel(params.dst_stripe,
+                       common_data->reg_base_virt + LOGIBITBLIT_DST_STRIPE_ROFF);
                 writel(params.num_columns, common_data->reg_base_virt + LOGIBITBLIT_XWIDTH_ROFF);
                 writel(params.num_rows, common_data->reg_base_virt + LOGIBITBLIT_YWIDTH_ROFF);
                 
+                writel(0xFF,
+                       common_data->reg_base_virt + LOGIBITBLIT_GLB_ALPHA_ROFF);
+
                 writel(LOGIBITBLIT_CTRL1_COLFMT_ARGB8888,
                        common_data->reg_base_virt + LOGIBITBLIT_CTRL1_ROFF);
-                if (ion_client)
-                        writel(LOGIBITBLIT_CTRL0_SRCLIN
-                               | LOGIBITBLIT_CTRL0_DSTLIN
-                               | LOGIBITBLIT_CTRL0_START,
-                               common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+                writel(LOGIBITBLIT_CTRL0_START
+                       //|LOGIBITBLIT_CTRL0_SRCLIN
+                       //| LOGIBITBLIT_CTRL0_DSTLIN
+                       ,
+                       common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
 
                 // wait for completion
+                int timeout = 1000000;
+                if (params.timeout)
+                        timeout = params.timeout;
+
+                int ctrl0;
                 do {
                         status = readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF);
-                        driver_devel("%s:%d status=%x\n", __func__, __LINE__, status);
-                } while (status == 0);
+                        ctrl0 = readl(common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+                        //driver_devel("%s:%d status=%x\n", __func__, __LINE__, status);
+                } while (status == 0 && timeout--);
+                driver_devel("%s:%d ctrl0=%x status=%x\n", __func__, __LINE__, ctrl0, status);
                 writel(7, common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF);
 
                 ion_free(ion_client, src_ion_handle);
@@ -183,6 +176,7 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
                 return 0;
         } break;
         default:
+                printk("xylonbb_unlocked_ioctl ENOTTY cmd=%x\n", cmd);
                 return -ENOTTY;
         }
 
@@ -192,8 +186,6 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
 static void xylonbb_release(struct inode *inode)
 {
 	driver_devel("%s\n", __func__);
-
-	return 0;
 }
 
 static const struct file_operations xylonbb_fops = {
