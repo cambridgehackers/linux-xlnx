@@ -36,7 +36,7 @@ static int xylonbb_parse_hw_info(struct device_node *np,
 static int xylonbb_of_probe(struct platform_device *pdev)
 {
 	struct xylonbb_init_data init_data;
-	int i, rc;
+	int rc;
 
         driver_devel("xylonbb_of_probe\n");
 

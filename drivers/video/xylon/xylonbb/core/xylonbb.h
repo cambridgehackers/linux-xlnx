@@ -19,7 +19,6 @@
 #include <linux/wait.h>
 #include <linux/mutex.h>
 #include <linux/miscdevice.h>
-#include "logicvc.h"
 
 
 #define DRIVER_NAME "xylonbb"
@@ -47,28 +46,19 @@
 
 #define BB_NAME_SZ 20
 
-struct xylonbb_registers {
-	u32 dtype_reg;
-};
-
-struct xylonbb_register_access {
-	u32 (*xylonbb_get_reg_val)
-		(void *reg_base_virt, unsigned long offset);
-	void (*xylonbb_set_reg_val)
-		(u32 value, void *reg_base_virt, unsigned long offset);
-};
-
 struct xylonbb_common_data {
 	struct device *dev;
         struct miscdevice misc;
         struct ion_device *ion_device;
         struct ion_client *ion_client;
-	struct mutex irq_mutex;
+	struct mutex reg_mutex;
+        struct mutex completion_mutex;
         dma_addr_t reg_base_phys;
         void      *reg_base_virt;
 	unsigned short xylonbb_flags;
 	unsigned char xylonbb_irq;
 	unsigned char xylonbb_use_ref;
+        unsigned long int_status;
 };
 
 struct xylonbb_init_data {

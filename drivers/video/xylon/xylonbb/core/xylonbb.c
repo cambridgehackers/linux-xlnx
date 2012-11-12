@@ -20,6 +20,7 @@
  */
 
 
+#define DEBUG
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
@@ -42,21 +43,21 @@ static irqreturn_t xylonbb_isr(int irq, void *dev_id)
 	struct xylonbb_common_data *common_data = (struct xylonbb_common_data *)dev_id;
 	u32 isr;
 
-	driver_devel("%s IRQ %d\n", __func__, irq);
 
-#if 0
-	isr = readl(layer_data->reg_base_virt + LOGICVC_INT_STAT_ROFF);
-	if (isr & LOGICVC_V_SYNC_INT) {
-		writel(LOGICVC_V_SYNC_INT,
-			layer_data->reg_base_virt + LOGICVC_INT_STAT_ROFF);
-		common_data->xylonbb_vsync.cnt++;
-		wake_up_interruptible(&common_data->xylonbb_vsync.wait);
-		return IRQ_HANDLED;
-	} else {
-		return IRQ_NONE;
-	}
-#endif
-		return IRQ_NONE;
+        isr = readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF);
+	driver_devel("%s IRQ %d %d\n", __func__, irq, isr);
+        // clear it
+        common_data->int_status = isr;
+        writel(isr, common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF);
+        mutex_unlock(&common_data->completion_mutex);
+
+        if (isr & 2) {
+                writel(LOGIBITBLIT_CTRL0_RESET,
+                       common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+                writel(0,
+                       common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+        }
+        return IRQ_HANDLED;
 }
 
 static int xylonbb_open(struct inode *inode, struct file *filep)
@@ -65,9 +66,6 @@ static int xylonbb_open(struct inode *inode, struct file *filep)
 	struct xylonbb_common_data *common_data =
                 container_of(miscdev, struct xylonbb_common_data, misc);
 
-        driver_devel("%s:%d miscdev=%p\n", __func__, __LINE__, miscdev);
-        driver_devel("%s:%d common_data=%p\n", __func__, __LINE__, common_data);
-        driver_devel("%s:%d reg_base_virt=%p\n", __func__, __LINE__, common_data->reg_base_virt);
         driver_devel("%s ip_version %08x\n", __func__,
                      readl(common_data->reg_base_virt + LOGIBITBLIT_IP_VERSION_ROFF));
         driver_devel("%s int_status %08x\n", __func__,
@@ -81,6 +79,7 @@ static int xylonbb_open(struct inode *inode, struct file *filep)
         driver_devel("%s post reset ctrl0 %08x int_status %08x\n", __func__,
                      readl(common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF),
                      readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF));
+        writel(3, common_data->reg_base_virt + LOGIBITBLIT_INT_ENABLE_ROFF);
 	return 0;
 }
 
@@ -90,7 +89,7 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
 	struct xylonbb_common_data *common_data =
                 container_of(miscdev, struct xylonbb_common_data, misc);
 
-        driver_devel("xylonbb_ioctl cmd=%x arg=%lx ctrl0=%x status=%x\n",
+        driver_devel("xylonbb_ioctl cmd=%x arg=%lx ctrl0=%x int_status=%x\n",
                cmd, arg,
                readl(common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF),
                readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF));
@@ -100,13 +99,17 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
                 ion_phys_addr_t src_dma_addr, dst_dma_addr;
                 struct ion_handle *src_ion_handle, *dst_ion_handle;
                 size_t src_dma_len, dst_dma_len;
-                int status;
+                int status = 0;
                 struct ion_client *ion_client = common_data->ion_client;
                 if (!ion_client)
                         return -ENODEV;
                 
 		if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
 			return -EFAULT;
+
+                int got_lock = mutex_lock_interruptible(&common_data->reg_mutex);
+                if (got_lock < 0)
+                        return got_lock;
 
                 src_ion_handle = ion_import_dma_buf(ion_client, params.src_dma_buf);
                 dst_ion_handle = ion_import_dma_buf(ion_client, params.dst_dma_buf);
@@ -150,28 +153,27 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
 
                 writel(LOGIBITBLIT_CTRL1_COLFMT_ARGB8888,
                        common_data->reg_base_virt + LOGIBITBLIT_CTRL1_ROFF);
+
                 writel(LOGIBITBLIT_CTRL0_START
                        //|LOGIBITBLIT_CTRL0_SRCLIN
                        //| LOGIBITBLIT_CTRL0_DSTLIN
                        ,
                        common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
 
-                // wait for completion
-                int timeout = 1000000;
-                if (params.timeout)
-                        timeout = params.timeout;
 
-                int ctrl0;
-                do {
-                        status = readl(common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF);
-                        ctrl0 = readl(common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
-                        //driver_devel("%s:%d status=%x\n", __func__, __LINE__, status);
-                } while (status == 0 && timeout--);
-                driver_devel("%s:%d ctrl0=%x status=%x\n", __func__, __LINE__, ctrl0, status);
-                writel(7, common_data->reg_base_virt + LOGIBITBLIT_INT_STATUS_ROFF);
+                status = mutex_lock_interruptible(&common_data->completion_mutex);
+                driver_devel("%s:%d int_status=%lx sema_status=%x ctrl0=%x\n",
+                             __func__, __LINE__, common_data->int_status, status,
+                             readl(common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF));
+
+                writel(0, common_data->reg_base_virt + LOGIBITBLIT_CTRL0_ROFF);
+                mutex_unlock(&common_data->reg_mutex);
 
                 ion_free(ion_client, src_ion_handle);
                 ion_free(ion_client, dst_ion_handle);
+
+                if (status)
+                        return status;
 
                 return 0;
         } break;
@@ -183,9 +185,9 @@ long xylonbb_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long 
         return -ENODEV;
 }
 
-static void xylonbb_release(struct inode *inode)
+static void xylonbb_release(struct inode *inode, struct file *filep)
 {
-	driver_devel("%s\n", __func__);
+	driver_devel("%s inode=%p filep=%p\n", __func__, inode, filep);
 }
 
 static const struct file_operations xylonbb_fops = {
@@ -232,6 +234,9 @@ int xylonbb_init_driver(struct xylonbb_init_data *init_data)
         common_data->reg_base_phys = reg_base_phys;
         common_data->reg_base_virt = reg_base_virt;
 
+        mutex_init(&common_data->reg_mutex);
+        mutex_init(&common_data->completion_mutex);
+
 	common_data->xylonbb_irq = irq_res->start;
 	if (request_irq(common_data->xylonbb_irq, xylonbb_isr,
 			IRQF_TRIGGER_HIGH, DEVICE_NAME, common_data)) {
@@ -239,19 +244,6 @@ int xylonbb_init_driver(struct xylonbb_init_data *init_data)
 		goto err_bb;
 	}
 
-#if defined(__LITTLE_ENDIAN)
-	common_data->xylonbb_flags |= BB_MEMORY_LE;
-#endif
-#if 0
-	mutex_init(&common_data->irq_mutex);
-	init_waitqueue_head(&common_data->xylonbb_vsync.wait);
-	common_data->xylonbb_use_ref = 0;
-
-	common_data->xylonbb_flags &=
-		~(BB_VMODE_INIT | BB_DEFAULT_VMODE_SET | BB_VMODE_SET);
-	xylonbb_mode_option = NULL;
-
-#endif
 	common_data->dev = dev;
 	dev_set_drvdata(dev, (void *)common_data);
 
