@@ -236,6 +236,7 @@ int xylonbb_init_driver(struct xylonbb_init_data *init_data)
 
         mutex_init(&common_data->reg_mutex);
         mutex_init(&common_data->completion_mutex);
+        mutex_lock(&common_data->completion_mutex);
 
 	common_data->xylonbb_irq = irq_res->start;
 	if (request_irq(common_data->xylonbb_irq, xylonbb_isr,
