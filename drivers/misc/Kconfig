@@ -538,4 +538,12 @@ source "drivers/misc/carma/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
 source "drivers/misc/mei/Kconfig"
 source "drivers/misc/vmw_vmci/Kconfig"
+
+config USHW_BRIDGE
+	bool "Generic userspace hardware bridge driver"
+        default n
+        select OF
+        help
+          Generic userspace hardware bridge
+
 endmenu
