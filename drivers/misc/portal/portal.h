@@ -10,8 +10,8 @@
  * kind, whether express or implied.
  */
 
-#ifndef __USHW_BRIDGE_H__
-#define __USHW_BRIDGE_H__
+#ifndef __PORTAL_H__
+#define __PORTAL_H__
 
 
 #include <linux/ion.h>
@@ -21,7 +21,7 @@
 #include <linux/wait.h>
 
 
-#define DRIVER_NAME "ushw_bridge"
+#define DRIVER_NAME "portal"
 #define DRIVER_DESCRIPTION "Generic userspace hardware bridge"
 #define DRIVER_VERSION "0.1"
 
@@ -34,9 +34,9 @@
 #define driver_devel(format, ...)
 #endif
 
-#define USHW_BRIDGE_NAME_SZ 20
+#define PORTAL_NAME_SZ 20
 
-struct ushw_bridge_data {
+struct portal_data {
 	struct device *dev;
         struct miscdevice misc;
         struct ion_device *ion_device;
@@ -47,9 +47,9 @@ struct ushw_bridge_data {
         const char *device_name;
         dma_addr_t reg_base_phys;
         void      *reg_base_virt;
-	unsigned short ushw_bridge_flags;
-	unsigned char ushw_bridge_irq;
-	unsigned char ushw_bridge_use_ref;
+	unsigned short portal_flags;
+	unsigned char portal_irq;
+	unsigned char portal_use_ref;
         unsigned long int_status;
 
         u32 timer_values[2];
@@ -57,7 +57,7 @@ struct ushw_bridge_data {
         u32 buf[128];
 };
 
-struct ushw_bridge_init_data {
+struct portal_init_data {
 	struct platform_device *pdev;
 	unsigned long vmem_base_addr;
 	unsigned long vmem_high_addr;
@@ -69,7 +69,7 @@ struct ushw_bridge_init_data {
 };
 
 
-extern int ushw_bridge_init_driver(struct ushw_bridge_init_data *init_data);
-extern int ushw_bridge_deinit_driver(struct platform_device *pdev);
+extern int portal_init_driver(struct portal_init_data *init_data);
+extern int portal_deinit_driver(struct platform_device *pdev);
 
-#endif /* __USHW_BRIDGE_H__ */
+#endif /* __PORTAL_H__ */

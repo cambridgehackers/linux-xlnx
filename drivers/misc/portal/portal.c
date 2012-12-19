@@ -15,7 +15,6 @@
 #include <linux/delay.h>
 #include <linux/fs.h>
 #include <linux/interrupt.h>
-#include <linux/ion.h>
 #include <linux/of.h>
 #include <linux/poll.h>
 #include <linux/uaccess.h>
@@ -24,22 +23,14 @@
 #include <linux/platform_device.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
-#include "ushw_bridge.h"
-#include <linux/ushw_bridge.h>
+#include "portal.h"
+#include <linux/portal.h>
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#include <linux/portal.h>
 
-typedef struct UshwMessage {
-    size_t argsize;
-    size_t resultsize;
-} UshwMessage;
-
-#define USHW_PUTGET _IOWR('B', 17, UshwMessage)
-#define USHW_PUT _IOWR('B', 18, UshwMessage)
-#define USHW_GET _IOWR('B', 19, UshwMessage)
-
-static void dump_regs(const char *prefix, struct ushw_bridge_data *ushw_data)
+static void dump_regs(const char *prefix, struct portal_data *ushw_data)
 {
         int i;
         for (i = 0; i < 10; i++) {
@@ -50,9 +41,9 @@ static void dump_regs(const char *prefix, struct ushw_bridge_data *ushw_data)
         }
 }
 
-static irqreturn_t ushw_bridge_isr(int irq, void *dev_id)
+static irqreturn_t portal_isr(int irq, void *dev_id)
 {
-	struct ushw_bridge_data *ushw_data = (struct ushw_bridge_data *)dev_id;
+	struct portal_data *ushw_data = (struct portal_data *)dev_id;
 	u32 isr;
 
 
@@ -71,11 +62,11 @@ static irqreturn_t ushw_bridge_isr(int irq, void *dev_id)
         return IRQ_HANDLED;
 }
 
-static int ushw_bridge_open(struct inode *inode, struct file *filep)
+static int portal_open(struct inode *inode, struct file *filep)
 {
 	struct miscdevice *miscdev = filep->private_data;
-	struct ushw_bridge_data *ushw_data =
-                container_of(miscdev, struct ushw_bridge_data, misc);
+	struct portal_data *ushw_data =
+                container_of(miscdev, struct portal_data, misc);
 
         int i;
 
@@ -110,22 +101,22 @@ static int ushw_bridge_open(struct inode *inode, struct file *filep)
 	return 0;
 }
 
-long ushw_bridge_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
 	struct miscdevice *miscdev = filep->private_data;
-	struct ushw_bridge_data *ushw_data =
-                container_of(miscdev, struct ushw_bridge_data, misc);
+	struct portal_data *ushw_data =
+                container_of(miscdev, struct portal_data, misc);
 
         switch (cmd) {
 	case USHW_PUTGET:
 	case USHW_PUT: {
-                UshwMessage msg;
+                PortalMessage msg;
                 unsigned int buf[128];
                 int i;
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
                 printk("%s: copying message body\n", __FUNCTION__);
-		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.argsize))
+		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
                 printk("%s: writing args\n", __FUNCTION__);
                 for (i = 0; i < ushw_data->fifo_offset_req_resp[1] / 4; i++) {
@@ -136,18 +127,18 @@ long ushw_bridge_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned l
                 if (cmd == USHW_PUTGET) {
                         printk("%s: PUTGET acquiring completion_mutex\n", __FUNCTION__);
                         mutex_lock_interruptible(&ushw_data->completion_mutex);
-                        for (i = 0; i < ushw_data->fifo_offset_req_resp[1] / 4; i++) {
+                        for (i = 0; i < ushw_data->fifo_offset_req_resp[2] / 4; i++) {
                                 printk("%s: result %x %x\n", __FUNCTION__, i*4, ushw_data->buf[i]);
                         }
-                        if (msg.resultsize)
-                                if (copy_to_user((void __user *)arg+sizeof(msg)+msg.argsize,
-                                                 ushw_data->buf, sizeof(msg.resultsize)))
+                        if (msg.size)
+                          if (copy_to_user((void __user *)arg+sizeof(msg),
+                                           ushw_data->buf, ushw_data->fifo_offset_req_resp[2]))
                                         return -EFAULT;
                 }
                 return 0;
         } break;
 	case USHW_GET: {
-                UshwMessage msg;
+                PortalMessage msg;
                 printk("%s: GET\n", __FUNCTION__);
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
@@ -164,68 +155,24 @@ long ushw_bridge_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned l
                 }
 
                 if (ushw_data->fifo_offset_req_resp[2])
-                        if (copy_to_user((void __user *)arg+sizeof(msg)+msg.argsize,
+                        if (copy_to_user((void __user *)arg+sizeof(msg)+msg.size,
                                          ushw_data->buf, sizeof(ushw_data->fifo_offset_req_resp[2])))
                                 return -EFAULT;
                 return 0;
         } break;
-	case USHW_BRIDGE_IOC_WAIT: {
-		struct ushw_bridge_params params;
-                ion_phys_addr_t src_dma_addr, dst_dma_addr;
-                struct ion_handle *src_ion_handle, *dst_ion_handle;
-                size_t src_dma_len, dst_dma_len;
-                int got_lock = 0, status = 0;
-                struct ion_client *ion_client = ushw_data->ion_client;
-                if (!ion_client)
-                        return -ENODEV;
-                
-		if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
-			return -EFAULT;
-
-                got_lock = mutex_lock_interruptible(&ushw_data->reg_mutex);
-                if (got_lock < 0)
-                        return got_lock;
-
-                src_ion_handle = ion_import_dma_buf(ion_client, params.src_dma_buf);
-                dst_ion_handle = ion_import_dma_buf(ion_client, params.dst_dma_buf);
-                status = ion_phys(ion_client, src_ion_handle, &src_dma_addr, &src_dma_len);
-                if (!src_dma_addr)
-                        return status;
-
-                status = ion_phys(ion_client, dst_ion_handle, &dst_dma_addr, &dst_dma_len);
-                driver_devel("%s:%d status=%d dst_dma_addr=%0lx\n",
-                       __func__, __LINE__, status, dst_dma_addr);
-                if (!dst_dma_addr)
-                        return status;
-
-                /* ... */
-
-                status = mutex_lock_interruptible(&ushw_data->completion_mutex);
-
-                //writel(0, ushw_data->reg_base_virt + USHW_BRIDGE_CTRL0_ROFF);
-                mutex_unlock(&ushw_data->reg_mutex);
-
-                ion_free(ion_client, src_ion_handle);
-                ion_free(ion_client, dst_ion_handle);
-
-                if (status)
-                        return status;
-
-                return 0;
-        } break;
         default:
-                printk("ushw_bridge_unlocked_ioctl ENOTTY cmd=%x\n", cmd);
+                printk("portal_unlocked_ioctl ENOTTY cmd=%x\n", cmd);
                 return -ENOTTY;
         }
 
         return -ENODEV;
 }
 
-unsigned int ushw_bridge_poll (struct file *filep, poll_table *poll_table)
+unsigned int portal_poll (struct file *filep, poll_table *poll_table)
 {
 	struct miscdevice *miscdev = filep->private_data;
-	struct ushw_bridge_data *ushw_data =
-                container_of(miscdev, struct ushw_bridge_data, misc);
+	struct portal_data *ushw_data =
+                container_of(miscdev, struct portal_data, misc);
         int int_status = readl(ushw_data->reg_base_virt + 0);
         int mask = 0;
         poll_wait(filep, &ushw_data->wait_queue, poll_table);
@@ -235,25 +182,23 @@ unsigned int ushw_bridge_poll (struct file *filep, poll_table *poll_table)
         return mask;
 }
 
-static int ushw_bridge_release(struct inode *inode, struct file *filep)
+static int portal_release(struct inode *inode, struct file *filep)
 {
 	driver_devel("%s inode=%p filep=%p\n", __func__, inode, filep);
         return 0;
 }
 
-static const struct file_operations ushw_bridge_fops = {
-	.open = ushw_bridge_open,
-        .unlocked_ioctl = ushw_bridge_unlocked_ioctl,
-        .poll = ushw_bridge_poll,
-	.release = ushw_bridge_release,
+static const struct file_operations portal_fops = {
+	.open = portal_open,
+        .unlocked_ioctl = portal_unlocked_ioctl,
+        .poll = portal_poll,
+	.release = portal_release,
 };
 
-extern struct ion_device *xylon_ion_device;
-
-int ushw_bridge_init_driver(struct ushw_bridge_init_data *init_data)
+int portal_init_driver(struct portal_init_data *init_data)
 {
 	struct device *dev;
-	struct ushw_bridge_data *ushw_data;
+	struct portal_data *ushw_data;
 	struct resource *reg_res, *irq_res;
         struct miscdevice *miscdev;
 	void *reg_base_virt;
@@ -267,13 +212,13 @@ int ushw_bridge_init_driver(struct ushw_bridge_init_data *init_data)
 	reg_res = platform_get_resource(init_data->pdev, IORESOURCE_MEM, 0);
 	irq_res = platform_get_resource(init_data->pdev, IORESOURCE_IRQ, 0);
 	if ((!reg_res) || (!irq_res)) {
-		pr_err("Error ushw_bridge resources\n");
+		pr_err("Error portal resources\n");
 		return -ENODEV;
 	}
 
-	ushw_data = kzalloc(sizeof(struct ushw_bridge_data), GFP_KERNEL);
+	ushw_data = kzalloc(sizeof(struct portal_data), GFP_KERNEL);
 	if (!ushw_data) {
-		pr_err("Error ushw_bridge allocating internal data\n");
+		pr_err("Error portal allocating internal data\n");
 		rc = -ENOMEM;
 		goto err_mem;
 	}
@@ -296,35 +241,30 @@ int ushw_bridge_init_driver(struct ushw_bridge_init_data *init_data)
         mutex_lock(&ushw_data->completion_mutex);
         init_waitqueue_head(&ushw_data->wait_queue);
 
-	ushw_data->ushw_bridge_irq = irq_res->start;
-	if (request_irq(ushw_data->ushw_bridge_irq, ushw_bridge_isr,
+	ushw_data->portal_irq = irq_res->start;
+	if (request_irq(ushw_data->portal_irq, portal_isr,
 			IRQF_TRIGGER_HIGH, ushw_data->device_name, ushw_data)) {
-		ushw_data->ushw_bridge_irq = 0;
+		ushw_data->portal_irq = 0;
 		goto err_bb;
 	}
 
 	ushw_data->dev = dev;
 	dev_set_drvdata(dev, (void *)ushw_data);
 
-        if (xylon_ion_device) {
-                ushw_data->ion_client = ion_client_create(xylon_ion_device, 0xF, "ushw_bridge");
-                driver_devel("%s:%d ion_client=%p\n", __func__, __LINE__, ushw_data->ion_client);
-        }
-
         miscdev = &ushw_data->misc;
         driver_devel("%s:%d miscdev=%p\n", __func__, __LINE__, miscdev);
         driver_devel("%s:%d ushw_data=%p\n", __func__, __LINE__, ushw_data);
         miscdev->minor = MISC_DYNAMIC_MINOR;
         miscdev->name = ushw_data->device_name;
-        miscdev->fops = &ushw_bridge_fops;
+        miscdev->fops = &portal_fops;
         miscdev->parent = NULL;
         misc_register(miscdev);
 
 	return 0;
 
 err_bb:
-	if (ushw_data->ushw_bridge_irq != 0)
-		free_irq(ushw_data->ushw_bridge_irq, ushw_data);
+	if (ushw_data->portal_irq != 0)
+		free_irq(ushw_data->portal_irq, ushw_data);
 
 err_mem:
 	if (ushw_data) {
@@ -336,20 +276,20 @@ err_mem:
 	return rc;
 }
 
-int ushw_bridge_deinit_driver(struct platform_device *pdev)
+int portal_deinit_driver(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct ushw_bridge_data *ushw_data = 
-                (struct ushw_bridge_data *)dev_get_drvdata(dev);
+	struct portal_data *ushw_data = 
+                (struct portal_data *)dev_get_drvdata(dev);
 
 	driver_devel("%s\n", __func__);
 
-	if (ushw_data->ushw_bridge_use_ref) {
-		pr_err("Error ushw_bridge in use\n");
+	if (ushw_data->portal_use_ref) {
+		pr_err("Error portal in use\n");
 		return -EINVAL;
 	}
 
-	free_irq(ushw_data->ushw_bridge_irq, ushw_data);
+	free_irq(ushw_data->portal_irq, ushw_data);
 	kfree(ushw_data);
 
 	dev_set_drvdata(dev, NULL);
@@ -357,8 +297,8 @@ int ushw_bridge_deinit_driver(struct platform_device *pdev)
 	return 0;
 }
 
-static int ushw_bridge_parse_hw_info(struct device_node *np,
-                                     struct ushw_bridge_init_data *init_data)
+static int portal_parse_hw_info(struct device_node *np,
+                                     struct portal_init_data *init_data)
 {
 	u32 const *prop;
 	int size;
@@ -386,70 +326,70 @@ static int ushw_bridge_parse_hw_info(struct device_node *np,
 	return 0;
 }
 
-static int ushw_bridge_of_probe(struct platform_device *pdev)
+static int portal_of_probe(struct platform_device *pdev)
 {
-	struct ushw_bridge_init_data init_data;
+	struct portal_init_data init_data;
 	int rc;
 
-        driver_devel("ushw_bridge_of_probe\n");
+        driver_devel("portal_of_probe\n");
 
-	memset(&init_data, 0, sizeof(struct ushw_bridge_init_data));
+	memset(&init_data, 0, sizeof(struct portal_init_data));
 
 	init_data.pdev = pdev;
 
-	rc = ushw_bridge_parse_hw_info(pdev->dev.of_node, &init_data);
-        driver_devel("ushw_bridge_parse_hw_info returned %d\n", rc);
+	rc = portal_parse_hw_info(pdev->dev.of_node, &init_data);
+        driver_devel("portal_parse_hw_info returned %d\n", rc);
 	if (rc)
 		return rc;
 
-	return ushw_bridge_init_driver(&init_data);
+	return portal_init_driver(&init_data);
 }
 
-static int ushw_bridge_of_remove(struct platform_device *pdev)
+static int portal_of_remove(struct platform_device *pdev)
 {
-	return ushw_bridge_deinit_driver(pdev);
+	return portal_deinit_driver(pdev);
 }
 
 
-static struct of_device_id ushw_bridge_of_match[] __devinitdata = {
+static struct of_device_id portal_of_match[] __devinitdata = {
 	{ .compatible = "linux,ushw-bridge-0.01.a" },
 	{/* end of table */},
 };
-MODULE_DEVICE_TABLE(of, ushw_bridge_of_match);
+MODULE_DEVICE_TABLE(of, portal_of_match);
 
 
-static struct platform_driver ushw_bridge_of_driver = {
-	.probe = ushw_bridge_of_probe,
-	.remove = ushw_bridge_of_remove,
+static struct platform_driver portal_of_driver = {
+	.probe = portal_of_probe,
+	.remove = portal_of_remove,
 	.driver = {
 		.owner = THIS_MODULE,
 		.name = DRIVER_NAME,
-		.of_match_table = ushw_bridge_of_match,
+		.of_match_table = portal_of_match,
 	},
 };
 
 
-static int __init ushw_bridge_of_init(void)
+static int __init portal_of_init(void)
 {
-	if (platform_driver_register(&ushw_bridge_of_driver)) {
-		pr_err("Error ushw_bridge driver registration\n");
+	if (platform_driver_register(&portal_of_driver)) {
+		pr_err("Error portal driver registration\n");
 		return -ENODEV;
 	}
 
 	return 0;
 }
 
-static void __exit ushw_bridge_of_exit(void)
+static void __exit portal_of_exit(void)
 {
-	platform_driver_unregister(&ushw_bridge_of_driver);
+	platform_driver_unregister(&portal_of_driver);
 }
 
 
 #ifndef MODULE
-late_initcall(ushw_bridge_of_init);
+late_initcall(portal_of_init);
 #else
-module_init(ushw_bridge_of_init);
-module_exit(ushw_bridge_of_exit);
+module_init(portal_of_init);
+module_exit(portal_of_exit);
 #endif
 
 MODULE_LICENSE("GPL v2");

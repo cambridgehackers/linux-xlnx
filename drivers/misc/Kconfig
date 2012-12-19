@@ -529,6 +529,13 @@ config SRAM
 	  the genalloc API. It is supposed to be used for small on-chip SRAM
 	  areas found on many SoCs.
 
+config PORTAL
+	bool "Generic hardware portal driver"
+        default n
+        select OF
+        help
+          Generic userspace hardware portal
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -538,12 +545,5 @@ source "drivers/misc/carma/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
 source "drivers/misc/mei/Kconfig"
 source "drivers/misc/vmw_vmci/Kconfig"
-
-config USHW_BRIDGE
-	bool "Generic userspace hardware bridge driver"
-        default n
-        select OF
-        help
-          Generic userspace hardware bridge
 
 endmenu
