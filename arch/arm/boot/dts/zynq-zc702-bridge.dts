@@ -28,7 +28,7 @@
 		#size-cells = <0x1>;
 		ranges;
 
-		intc@f8f01000 {
+		gic: intc@f8f01000 {
 			interrupt-controller;
 			compatible = "arm,cortex-a9-gic";
 			#interrupt-cells = <0x3>;
@@ -51,7 +51,7 @@
 			compatible = "xlnx,ps7-uart-1.00.a";
 			reg = <0xe0001000 0x1000>;
 			interrupts = <0x0 0x32 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			clock = <0x2faf080>;
 		};
 
@@ -59,7 +59,7 @@
 			compatible = "xlnx,ps7-ttc-1.00.a";
 			reg = <0xf8001000 0x1000>;
 			interrupts = <0x0 0xa 0x4 0x0 0xb 0x4 0x0 0xc 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			clock-frequency-timer0 = <0x69f6bc7>;
 			clock-frequency-timer1 = <0x69f6bc7>;
 			clock-frequency-timer2 = <0x69f6bc7>;
@@ -69,7 +69,7 @@
 			compatible = "arm,cortex-a9-twd-timer";
 			reg = <0xf8f00600 0x20>;
 			interrupts = <0x1 0xd 0x301>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 		};
 
 		swdt@f8005000 {
@@ -78,7 +78,7 @@
 			reg = <0xf8005000 0x100>;
 			clock-frequency = <0x69f6bc7>;
 			interrupts = <0x0 0x9 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			reset = <0x0>;
 			timeout = <0xa>;
 		};
@@ -94,19 +94,18 @@
 		eth@e000b000 {
 			compatible = "xlnx,ps7-ethernet-1.00.a";
 			reg = <0xe000b000 0x1000>;
-			interrupts = <0x0 0x16 0x4>;
-			interrupt-parent = <0x1>;
-			phy-handle = <0x2>;
-			xlnx,ptp-enet-clock = <0x69f6bc7>;
-			xlnx,slcr-div0-1000Mbps = <0x8>;
-			xlnx,slcr-div0-100Mbps = <0x8>;
-			xlnx,slcr-div0-10Mbps = <0x8>;
-			xlnx,slcr-div1-1000Mbps = <0x1>;
-			xlnx,slcr-div1-100Mbps = <0x5>;
-			xlnx,slcr-div1-10Mbps = <0x32>;
+			interrupts = <0 22 4>;
+			interrupt-parent = <&gic>;
+			phy-handle = <&phy0>;
+			xlnx,ptp-enet-clock = <111111111>;
+			xlnx,slcr-div0-1000Mbps = <8>;
+			xlnx,slcr-div0-100Mbps = <8>;
+			xlnx,slcr-div0-10Mbps = <8>;
+			xlnx,slcr-div1-1000Mbps = <1>;
+			xlnx,slcr-div1-100Mbps = <5>;
+			xlnx,slcr-div1-10Mbps = <50>;
 			#address-cells = <0x1>;
 			#size-cells = <0x0>;
-
 			mdio {
 				#address-cells = <1>;
 				#size-cells = <0>;
@@ -118,16 +117,96 @@
 			};
 		};
 
-		i2c@e0004000 {
+		i2c0: i2c@e0004000 {
 			compatible = "xlnx,ps7-i2c-1.00.a";
-			reg = <0xe0004000 0x1000>;
-			interrupts = <0x0 0x19 0x4>;
-			interrupt-parent = <0x1>;
-			bus-id = <0x0>;
-			input-clk = <0x69f6bc7>;
-			i2c-clk = <0x186a0>;
-			#address-cells = <0x1>;
-			#size-cells = <0x0>;
+			reg = <0xE0004000 0x1000>;
+			interrupts = <0 25 4>;
+			interrupt-parent = <&gic>;
+			bus-id = <0>;
+			input-clk = <111111111>;
+			i2c-clk = <100000>;
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+                        i2cswitch@74 {
+                                compatible = "nxp,pca9548";
+                                #address-cells = <1>;
+                                #size-cells = <0>;
+                                reg = <0x74>;
+
+				i2c@0 {
+                                        #address-cells = <1>;
+                                        #size-cells = <0>;
+                                        reg = <0>;
+                                        osc@5d {
+                                                compatible = "si570";
+                                                reg = <0x5d>;
+						factory-fout = <156250000>;
+						initial-fout = <148500000>;
+                                        };
+				};
+
+				i2c@1 {
+                                        #address-cells = <1>;
+                                        #size-cells = <0>;
+                                        reg = <1>;
+                                        adv7511@39 {
+                                                compatible = "adv7511";
+                                                reg = <0x39>;
+                                                format = "RGB";
+                                        };
+                                };
+
+				i2c@2 {
+                                        #address-cells = <1>;
+                                        #size-cells = <0>;
+                                        reg = <2>;
+                                        eeprom@54 {
+                                                compatible = "at,24c08";
+                                                reg = <0x54>;
+                                        };
+                                };
+
+				i2c@3 {
+                                        #address-cells = <1>;
+                                        #size-cells = <0>;
+                                        reg = <3>;
+                                        gpio@21 {
+                                                compatible = "ti,tca6416";
+                                                reg = <0x21>;
+						gpio-controller;
+						#gpio-cells = <2>;
+                                        };
+				};
+
+				i2c@4 {
+                                        #address-cells = <1>;
+                                        #size-cells = <0>;
+                                        reg = <4>;
+                                        rtc@54 {
+                                                compatible = "nxp,pcf8563";
+                                                reg = <0x51>;
+                                        };
+				};
+
+				i2c@7 {
+                                        #address-cells = <1>;
+                                        #size-cells = <0>;
+                                        reg = <7>;
+                                        hwmon@52{
+                                                compatible = "pmbus,ucd9248";
+                                                reg = <52>;
+                                        };
+                                        hwmon@53{
+                                                compatible = "pmbus,ucd9248";
+                                                reg = <53>;
+                                        };
+                                        hwmon@54{
+                                                compatible = "pmbus,ucd9248";
+                                                reg = <54>;
+					};
+				};
+			};
 		};
 
 		sdhci@e0100000 {
@@ -135,7 +214,7 @@
 			reg = <0xe0100000 0x1000>;
 			xlnx,has-cd = <0x1>;
 			interrupts = <0x0 0x18 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			clock-frequency = <0x1fc9f08>;
 		};
 
@@ -143,7 +222,7 @@
 			compatible = "xlnx,ps7-usb-1.00.a";
 			reg = <0xe0002000 0x1000>;
 			interrupts = <0x0 0x15 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			dr_mode = "host";
 			phy_type = "ulpi";
 		};
@@ -152,14 +231,14 @@
 			compatible = "xlnx,ps7-gpio-1.00.a";
 			reg = <0xe000a000 0x1000>;
 			interrupts = <0x0 0x14 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 		};
 
 		spi@e000d000 {
 			compatible = "xlnx,ps7-qspi-1.00.a";
 			reg = <0xe000d000 0x1000>;
 			interrupts = <0x0 0x13 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			speed-hz = <0xbebc200>;
 			bus-num = <0x1>;
 			num-chip-select = <0x1>;
@@ -217,7 +296,7 @@
 			ip-minor-revision = <0x1>;
 			ip-patch-revision = <0x0>;
 			interrupts = <0x0 0x3b 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			reg = <0x63400000 0x400>;
 			device-name = "foolite0";
 		};
@@ -228,7 +307,7 @@
 			ip-minor-revision = <0x1>;
 			ip-patch-revision = <0x0>;
 			interrupts = <0x0 0x3a 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			reg = <0x6ae00000 0x400>;
 			device-name = "fooslave0";
 			timer = <0x8 0x4>;
@@ -241,7 +320,7 @@
 			ip-minor-revision = <0x1>;
 			ip-patch-revision = <0x0>;
 			interrupts = <0x0 0x37 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			reg = <0x6e400000 0x400>;
 			device-name = "foomaster0";
 			fifo = <0x100 0x8 0x8>;
@@ -253,7 +332,7 @@
 			ip-minor-revision = <0x1>;
 			ip-patch-revision = <0x0>;
 			interrupts = <0x0 0x36 0x4>;
-			interrupt-parent = <0x1>;
+			interrupt-parent = <&gic>;
 			reg = <0x6c200000 0x400>;
 			device-name = "foomaster1";
 			fifo = <0x100 0x8 0x8>;
