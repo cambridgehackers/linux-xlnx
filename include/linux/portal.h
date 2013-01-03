@@ -17,19 +17,20 @@
 #include <linux/ioctl.h>
 
 typedef struct PortalAlloc {
-    size_t size;
-    unsigned char *kptr;
+        size_t size;
+        int fd;
+        unsigned long dma_address;
 } PortalAlloc;
 
 typedef struct PortalMessage {
     size_t size;
 } PortalMessage;
 
-#define USHW_ALLOC _IOWR('B', 10, PortalAlloc)
-#define USHW_PUTGET _IOWR('B', 17, PortalMessage)
-#define USHW_PUT _IOWR('B', 18, PortalMessage)
-#define USHW_GET _IOWR('B', 19, PortalMessage)
-#define USHW_REGS _IOWR('B', 20, PortalMessage)
+#define PORTAL_ALLOC _IOWR('B', 10, PortalAlloc)
+#define PORTAL_PUTGET _IOWR('B', 17, PortalMessage)
+#define PORTAL_PUT _IOWR('B', 18, PortalMessage)
+#define PORTAL_GET _IOWR('B', 19, PortalMessage)
+#define PORTAL_REGS _IOWR('B', 20, PortalMessage)
 
 #endif
 

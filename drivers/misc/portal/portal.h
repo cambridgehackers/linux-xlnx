@@ -20,7 +20,6 @@
 #include <linux/miscdevice.h>
 #include <linux/wait.h>
 
-
 #define DRIVER_NAME "portal"
 #define DRIVER_DESCRIPTION "Generic userspace hardware bridge"
 #define DRIVER_VERSION "0.1"

@@ -10,6 +10,7 @@
 
 #define DEBUG
 #include <linux/module.h>
+#include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
@@ -28,14 +29,50 @@
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#include <linux/dma-buf.h>
 #include <linux/portal.h>
 
-static void dump_regs(const char *prefix, struct portal_data *ushw_data)
+#include <linux/slab.h>
+#include <linux/scatterlist.h>
+#include "../../gpu/ion/ion_priv.h"
+
+struct ion_device *portal_ion_device;
+struct ion_heap *portal_ion_heap; 
+
+void portal_init_ion(void)
+{
+        struct ion_platform_heap heap_data;
+        char name[22];
+        int i = 0;
+        snprintf(name, sizeof(name), "portal-ion-heap-%d", i);
+        heap_data.type = ION_HEAP_TYPE_SYSTEM_CONTIG;
+        heap_data.id = i;
+        heap_data.name = name;
+        // fixme use devicetree
+        heap_data.base = 0x18000000; // not used for system_contig or system
+        heap_data.size = 0x08000000; // not used for system_contig or system
+
+        printk("creating ion_device for portal\n");
+        portal_ion_device = ion_device_create(NULL);
+        printk("ion_device %p\n", portal_ion_device);
+        printk("creating ion_heap for portal\n");
+        portal_ion_heap = ion_heap_create(&heap_data);
+        printk("ion_heap %p\n", portal_ion_heap);
+        ion_device_add_heap(portal_ion_device, portal_ion_heap);
+}
+
+void portal_ion_release(void)
+{
+        ion_device_destroy(portal_ion_device);
+        ion_heap_destroy(portal_ion_heap);
+}
+
+static void dump_regs(const char *prefix, struct portal_data *portal_data)
 {
         int i;
         for (i = 0; i < 10; i++) {
                 unsigned long regval;
-                regval = readl(ushw_data->reg_base_virt + i*4);
+                regval = readl(portal_data->reg_base_virt + i*4);
                 driver_devel("%s reg %x value %08lx\n", prefix,
                              i*4, regval);
         }
@@ -43,21 +80,21 @@ static void dump_regs(const char *prefix, struct portal_data *ushw_data)
 
 static irqreturn_t portal_isr(int irq, void *dev_id)
 {
-	struct portal_data *ushw_data = (struct portal_data *)dev_id;
+	struct portal_data *portal_data = (struct portal_data *)dev_id;
 	u32 isr;
 
 
-        isr = readl(ushw_data->reg_base_virt + 0);
+        isr = readl(portal_data->reg_base_virt + 0);
 	driver_devel("%s IRQ %d %x\n", __func__, irq, isr);
         // clear it
         if (!isr)
                 isr = 1;
-        ushw_data->int_status = isr;
-        writel(isr, ushw_data->reg_base_virt + 0);
+        portal_data->int_status = isr;
+        writel(isr, portal_data->reg_base_virt + 0);
 
-        dump_regs("ISR", ushw_data);
-        mutex_unlock(&ushw_data->completion_mutex);
-	wake_up_interruptible(&ushw_data->wait_queue);
+        dump_regs("ISR", portal_data);
+        mutex_unlock(&portal_data->completion_mutex);
+	wake_up_interruptible(&portal_data->wait_queue);
 
         return IRQ_HANDLED;
 }
@@ -65,51 +102,81 @@ static irqreturn_t portal_isr(int irq, void *dev_id)
 static int portal_open(struct inode *inode, struct file *filep)
 {
 	struct miscdevice *miscdev = filep->private_data;
-	struct portal_data *ushw_data =
+	struct portal_data *portal_data =
                 container_of(miscdev, struct portal_data, misc);
-
         int i;
 
-        driver_devel("%s: %s\n", __FUNCTION__, ushw_data->device_name);
+        driver_devel("%s: %s\n", __FUNCTION__, portal_data->device_name);
         for (i = 0; i < 8; i++) {
                 unsigned long before;
                 unsigned long after;
-                before = readl(ushw_data->reg_base_virt + i*4);
-                writel(0xdeadbeef + i, ushw_data->reg_base_virt + i*4);
-                after = readl(ushw_data->reg_base_virt + i*4);
+                before = readl(portal_data->reg_base_virt + i*4);
+                writel(0xdeadbeef + i, portal_data->reg_base_virt + i*4);
+                after = readl(portal_data->reg_base_virt + i*4);
                 driver_devel("%s reg %x before %08lx after %08lx\n", __func__,
                              i*4, before, after);
         }
 
-        // clear status
-        writel(0, ushw_data->reg_base_virt + 0);
-        // enable interrupts
-        writel(1, ushw_data->reg_base_virt + 4);
- #if 0
-        if (ushw_data->timer_values[0]) {
-                // start timer
-                writel(0x0FFFFFF, ushw_data->reg_base_virt + ushw_data->timer_values[0]);
-        }
-        if (ushw_data->fifo_offset_req_resp[0]) {
+        portal_data->ion_client = ion_client_create(portal_ion_device, 0xf, "portal_ion_client");
+        printk("portal created ion_client %p\n", portal_data->ion_client);
+
+        if (portal_data->ion_client) {
                 int i;
-                u32 args[2] = { 0xfeed0000, 0x0000beef };
-                for (i = 0; i < ushw_data->fifo_offset_req_resp[1] / 4; i++) {
-                        writel(args[i], ushw_data->reg_base_virt + ushw_data->fifo_offset_req_resp[0]);
+                struct ion_client *ion_client = portal_data->ion_client;
+                struct ion_handle *handle = ion_alloc(ion_client, 4096, 0, 1, 0xf);
+                printk("allocated handle %p\n", handle);
+                int fd = ion_share_dma_buf(ion_client, handle);
+                printk("sharing dma_buf fd %d\n", fd);
+                void *mapping = ion_map_kernel(ion_client, handle);
+                printk("mapped handle %p\n", mapping);
+                struct dma_buf *dma_buf = dma_buf_get(fd);
+                printk("dma_buf %p\n", dma_buf);
+                struct dma_buf_attachment *attachment = dma_buf_attach(dma_buf, miscdev->this_device);
+                struct sg_table *sg_table = dma_buf_map_attachment(attachment, DMA_TO_DEVICE);
+                printk("sg_table %p nents %d\n", sg_table, sg_table->nents);
+                for (i = 0; i < sg_table->nents; i++) {
+                        printk("entry %d dma_address %x\n", i, sg_table->sgl[i].dma_address);
                 }
+                dma_buf_detach(dma_buf, attachment);
         }
-#endif
+
+        // clear status
+        writel(0, portal_data->reg_base_virt + 0);
+        // enable interrupts
+        writel(1, portal_data->reg_base_virt + 4);
 	return 0;
 }
 
 long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
 	struct miscdevice *miscdev = filep->private_data;
-	struct portal_data *ushw_data =
+	struct portal_data *portal_data =
                 container_of(miscdev, struct portal_data, misc);
 
         switch (cmd) {
-	case USHW_PUTGET:
-	case USHW_PUT: {
+        case PORTAL_ALLOC: {
+                struct PortalAlloc alloc;
+		if (copy_from_user(&alloc, (void __user *)arg, sizeof(alloc)))
+			return -EFAULT;
+                alloc.size = round_up(alloc.size, 4096);
+                struct ion_handle *handle = ion_alloc(portal_data->ion_client, alloc.size, 4096,
+                                                      1, ION_FLAG_CACHED_NEEDS_SYNC);
+                alloc.fd = ion_share_dma_buf(portal_data->ion_client, handle);
+                struct dma_buf *dma_buf = dma_buf_get(alloc.fd);
+                struct dma_buf_attachment *attachment = dma_buf_attach(dma_buf, miscdev->this_device);
+                struct sg_table *sg_table = dma_buf_map_attachment(attachment, DMA_TO_DEVICE);
+                
+                alloc.dma_address = sg_table->sgl[0].dma_address;
+
+                //sg_free_table(sg_table);
+                dma_buf_detach(dma_buf, attachment);
+
+                if (copy_to_user((void __user *)arg, &alloc, sizeof(alloc)))
+                        return -EFAULT;
+                return 0;
+        } break;
+	case PORTAL_PUTGET:
+	case PORTAL_PUT: {
                 PortalMessage msg;
                 unsigned int buf[128];
                 int i;
@@ -119,44 +186,44 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
                 printk("%s: writing args\n", __FUNCTION__);
-                for (i = 0; i < ushw_data->fifo_offset_req_resp[1] / 4; i++) {
+                for (i = 0; i < portal_data->fifo_offset_req_resp[1] / 4; i++) {
                         printk("arg %x %08x\n", i*4, buf[i]);
-                        writel(buf[i], ushw_data->reg_base_virt + ushw_data->fifo_offset_req_resp[0]);
+                        writel(buf[i], portal_data->reg_base_virt + portal_data->fifo_offset_req_resp[0]);
                 }
-                dump_regs("PUT", ushw_data);
-                if (cmd == USHW_PUTGET) {
+                dump_regs("PUT", portal_data);
+                if (cmd == PORTAL_PUTGET) {
                         printk("%s: PUTGET acquiring completion_mutex\n", __FUNCTION__);
-                        mutex_lock_interruptible(&ushw_data->completion_mutex);
-                        for (i = 0; i < ushw_data->fifo_offset_req_resp[2] / 4; i++) {
-                                printk("%s: result %x %x\n", __FUNCTION__, i*4, ushw_data->buf[i]);
+                        mutex_lock_interruptible(&portal_data->completion_mutex);
+                        for (i = 0; i < portal_data->fifo_offset_req_resp[2] / 4; i++) {
+                                printk("%s: result %x %x\n", __FUNCTION__, i*4, portal_data->buf[i]);
                         }
                         if (msg.size)
                           if (copy_to_user((void __user *)arg+sizeof(msg),
-                                           ushw_data->buf, ushw_data->fifo_offset_req_resp[2]))
+                                           portal_data->buf, portal_data->fifo_offset_req_resp[2]))
                                         return -EFAULT;
                 }
                 return 0;
         } break;
-	case USHW_GET: {
+	case PORTAL_GET: {
                 PortalMessage msg;
                 printk("%s: GET\n", __FUNCTION__);
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
 
-                dump_regs("GET", ushw_data);
-                if (ushw_data->fifo_offset_req_resp[0]) {
+                dump_regs("GET", portal_data);
+                if (portal_data->fifo_offset_req_resp[0]) {
                         int i;
-                        for (i = 0; i < ushw_data->fifo_offset_req_resp[2]/4; i++) {
-                                ushw_data->buf[i] = 
-                                        readl(ushw_data->reg_base_virt
-                                              + ushw_data->fifo_offset_req_resp[0]);
-                                printk("%s: result %x %x\n", __FUNCTION__, i*4, ushw_data->buf[i]);
+                        for (i = 0; i < portal_data->fifo_offset_req_resp[2]/4; i++) {
+                                portal_data->buf[i] = 
+                                        readl(portal_data->reg_base_virt
+                                              + portal_data->fifo_offset_req_resp[0]);
+                                printk("%s: result %x %x\n", __FUNCTION__, i*4, portal_data->buf[i]);
                         }
                 }
 
-                if (ushw_data->fifo_offset_req_resp[2])
+                if (portal_data->fifo_offset_req_resp[2])
                         if (copy_to_user((void __user *)arg+sizeof(msg)+msg.size,
-                                         ushw_data->buf, sizeof(ushw_data->fifo_offset_req_resp[2])))
+                                         portal_data->buf, sizeof(portal_data->fifo_offset_req_resp[2])))
                                 return -EFAULT;
                 return 0;
         } break;
@@ -171,11 +238,11 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 unsigned int portal_poll (struct file *filep, poll_table *poll_table)
 {
 	struct miscdevice *miscdev = filep->private_data;
-	struct portal_data *ushw_data =
+	struct portal_data *portal_data =
                 container_of(miscdev, struct portal_data, misc);
-        int int_status = readl(ushw_data->reg_base_virt + 0);
+        int int_status = readl(portal_data->reg_base_virt + 0);
         int mask = 0;
-        poll_wait(filep, &ushw_data->wait_queue, poll_table);
+        poll_wait(filep, &portal_data->wait_queue, poll_table);
         if (int_status & 1)
                 mask = POLLIN | POLLRDNORM;
         printk("%s: int_status=%x mask=%x\n", __FUNCTION__, int_status, mask);
@@ -184,7 +251,11 @@ unsigned int portal_poll (struct file *filep, poll_table *poll_table)
 
 static int portal_release(struct inode *inode, struct file *filep)
 {
+	struct miscdevice *miscdev = filep->private_data;
+	struct portal_data *portal_data =
+                container_of(miscdev, struct portal_data, misc);
 	driver_devel("%s inode=%p filep=%p\n", __func__, inode, filep);
+        ion_client_destroy(portal_data->ion_client);
         return 0;
 }
 
@@ -198,7 +269,7 @@ static const struct file_operations portal_fops = {
 int portal_init_driver(struct portal_init_data *init_data)
 {
 	struct device *dev;
-	struct portal_data *ushw_data;
+	struct portal_data *portal_data;
 	struct resource *reg_res, *irq_res;
         struct miscdevice *miscdev;
 	void *reg_base_virt;
@@ -209,6 +280,9 @@ int portal_init_driver(struct portal_init_data *init_data)
 
 	dev = &init_data->pdev->dev;
 
+        if (!portal_ion_device)
+                portal_init_ion();
+
 	reg_res = platform_get_resource(init_data->pdev, IORESOURCE_MEM, 0);
 	irq_res = platform_get_resource(init_data->pdev, IORESOURCE_IRQ, 0);
 	if ((!reg_res) || (!irq_res)) {
@@ -216,46 +290,46 @@ int portal_init_driver(struct portal_init_data *init_data)
 		return -ENODEV;
 	}
 
-	ushw_data = kzalloc(sizeof(struct portal_data), GFP_KERNEL);
-	if (!ushw_data) {
+	portal_data = kzalloc(sizeof(struct portal_data), GFP_KERNEL);
+	if (!portal_data) {
 		pr_err("Error portal allocating internal data\n");
 		rc = -ENOMEM;
 		goto err_mem;
 	}
-        ushw_data->device_name = init_data->device_name;
-        memcpy(ushw_data->timer_values, init_data->timer_values, sizeof(init_data->timer_values));
-        memcpy(ushw_data->fifo_offset_req_resp,
+        portal_data->device_name = init_data->device_name;
+        memcpy(portal_data->timer_values, init_data->timer_values, sizeof(init_data->timer_values));
+        memcpy(portal_data->fifo_offset_req_resp,
                init_data->fifo_offset_req_resp, sizeof(init_data->fifo_offset_req_resp));
 
 	reg_base_phys = reg_res->start;
 	reg_range = reg_res->end - reg_res->start;
 	reg_base_virt = ioremap_nocache(reg_base_phys, reg_range);
         pr_info("%s reg_base phys %x/%x virt %p\n",
-                ushw_data->device_name,
+                portal_data->device_name,
                 reg_base_phys, reg_range, reg_base_virt);
-        ushw_data->reg_base_phys = reg_base_phys;
-        ushw_data->reg_base_virt = reg_base_virt;
+        portal_data->reg_base_phys = reg_base_phys;
+        portal_data->reg_base_virt = reg_base_virt;
 
-        mutex_init(&ushw_data->reg_mutex);
-        mutex_init(&ushw_data->completion_mutex);
-        mutex_lock(&ushw_data->completion_mutex);
-        init_waitqueue_head(&ushw_data->wait_queue);
+        mutex_init(&portal_data->reg_mutex);
+        mutex_init(&portal_data->completion_mutex);
+        mutex_lock(&portal_data->completion_mutex);
+        init_waitqueue_head(&portal_data->wait_queue);
 
-	ushw_data->portal_irq = irq_res->start;
-	if (request_irq(ushw_data->portal_irq, portal_isr,
-			IRQF_TRIGGER_HIGH, ushw_data->device_name, ushw_data)) {
-		ushw_data->portal_irq = 0;
+	portal_data->portal_irq = irq_res->start;
+	if (request_irq(portal_data->portal_irq, portal_isr,
+			IRQF_TRIGGER_HIGH, portal_data->device_name, portal_data)) {
+		portal_data->portal_irq = 0;
 		goto err_bb;
 	}
 
-	ushw_data->dev = dev;
-	dev_set_drvdata(dev, (void *)ushw_data);
+	portal_data->dev = dev;
+	dev_set_drvdata(dev, (void *)portal_data);
 
-        miscdev = &ushw_data->misc;
+        miscdev = &portal_data->misc;
         driver_devel("%s:%d miscdev=%p\n", __func__, __LINE__, miscdev);
-        driver_devel("%s:%d ushw_data=%p\n", __func__, __LINE__, ushw_data);
+        driver_devel("%s:%d portal_data=%p\n", __func__, __LINE__, portal_data);
         miscdev->minor = MISC_DYNAMIC_MINOR;
-        miscdev->name = ushw_data->device_name;
+        miscdev->name = portal_data->device_name;
         miscdev->fops = &portal_fops;
         miscdev->parent = NULL;
         misc_register(miscdev);
@@ -263,12 +337,12 @@ int portal_init_driver(struct portal_init_data *init_data)
 	return 0;
 
 err_bb:
-	if (ushw_data->portal_irq != 0)
-		free_irq(ushw_data->portal_irq, ushw_data);
+	if (portal_data->portal_irq != 0)
+		free_irq(portal_data->portal_irq, portal_data);
 
 err_mem:
-	if (ushw_data) {
-		kfree(ushw_data);
+	if (portal_data) {
+		kfree(portal_data);
 	}
 
 	dev_set_drvdata(dev, NULL);
@@ -279,18 +353,18 @@ err_mem:
 int portal_deinit_driver(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct portal_data *ushw_data = 
+	struct portal_data *portal_data = 
                 (struct portal_data *)dev_get_drvdata(dev);
 
 	driver_devel("%s\n", __func__);
 
-	if (ushw_data->portal_use_ref) {
+	if (portal_data->portal_use_ref) {
 		pr_err("Error portal in use\n");
 		return -EINVAL;
 	}
 
-	free_irq(ushw_data->portal_irq, ushw_data);
-	kfree(ushw_data);
+	free_irq(portal_data->portal_irq, portal_data);
+	kfree(portal_data);
 
 	dev_set_drvdata(dev, NULL);
 
@@ -381,6 +455,7 @@ static int __init portal_of_init(void)
 
 static void __exit portal_of_exit(void)
 {
+        portal_ion_release();
 	platform_driver_unregister(&portal_of_driver);
 }
 
