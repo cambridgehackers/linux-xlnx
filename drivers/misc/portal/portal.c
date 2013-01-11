@@ -42,12 +42,8 @@ struct ion_heap *portal_ion_heap;
 void portal_init_ion(void)
 {
         struct ion_platform_heap heap_data;
-        char name[22];
-        int i = 0;
-        snprintf(name, sizeof(name), "portal-ion-heap-%d", i);
+        int i;
         heap_data.type = ION_HEAP_TYPE_SYSTEM_CONTIG;
-        heap_data.id = i;
-        heap_data.name = name;
         // fixme use devicetree
         heap_data.base = 0x18000000; // not used for system_contig or system
         heap_data.size = 0x08000000; // not used for system_contig or system
@@ -55,10 +51,20 @@ void portal_init_ion(void)
         printk("creating ion_device for portal\n");
         portal_ion_device = ion_device_create(NULL);
         printk("ion_device %p\n", portal_ion_device);
-        printk("creating ion_heap for portal\n");
-        portal_ion_heap = ion_heap_create(&heap_data);
-        printk("ion_heap %p\n", portal_ion_heap);
-        ion_device_add_heap(portal_ion_device, portal_ion_heap);
+        for (i = 0; i < 2; i++) {
+                char name[22];
+                snprintf(name, sizeof(name), "portal-ion-heap-%d", i);
+
+                heap_data.id = i;
+                heap_data.name = name;
+                printk("creating ion_heap for portal\n");
+                portal_ion_heap = ion_heap_create(&heap_data);
+                printk("ion_heap %p\n", portal_ion_heap);
+                ion_device_add_heap(portal_ion_device, portal_ion_heap);
+
+                // next one is system
+                heap_data.type = ION_HEAP_TYPE_SYSTEM;
+        }
 }
 
 void portal_ion_release(void)
@@ -70,7 +76,7 @@ void portal_ion_release(void)
 static void dump_regs(const char *prefix, struct portal_data *portal_data)
 {
         int i;
-        for (i = 0; i < 10; i++) {
+        for (i = 0; i < 20; i++) {
                 unsigned long regval;
                 regval = readl(portal_data->reg_base_virt + i*4);
                 driver_devel("%s reg %x value %08lx\n", prefix,
@@ -106,16 +112,10 @@ static int portal_open(struct inode *inode, struct file *filep)
                 container_of(miscdev, struct portal_data, misc);
         int i;
 
-        driver_devel("%s: %s\n", __FUNCTION__, portal_data->device_name);
-        for (i = 0; i < 8; i++) {
-                unsigned long before;
-                unsigned long after;
-                before = readl(portal_data->reg_base_virt + i*4);
-                writel(0xdeadbeef + i, portal_data->reg_base_virt + i*4);
-                after = readl(portal_data->reg_base_virt + i*4);
-                driver_devel("%s reg %x before %08lx after %08lx\n", __func__,
-                             i*4, before, after);
-        }
+        driver_devel("%s: %s ctrl %lx fifo %lx\n", __FUNCTION__, portal_data->device_name,
+                     portal_data->reg_base_phys,
+                     portal_data->reg_base_phys + portal_data->fifo_offset_req_resp[0]);
+        dump_regs("portal_open", portal_data);
 
         portal_data->ion_client = ion_client_create(portal_ion_device, 0xf, "portal_ion_client");
         printk("portal created ion_client %p\n", portal_data->ion_client);
@@ -147,6 +147,14 @@ static int portal_open(struct inode *inode, struct file *filep)
 	return 0;
 }
 
+struct ion_handle {
+	struct kref ref;
+	struct ion_client *client;
+	struct ion_buffer *buffer;
+	struct rb_node node;
+	unsigned int kmap_cnt;
+};
+
 long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
 	struct miscdevice *miscdev = filep->private_data;
@@ -156,20 +164,29 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
         switch (cmd) {
         case PORTAL_ALLOC: {
                 struct PortalAlloc alloc;
+                struct dma_buf *dma_buf = 0;
+                struct dma_buf_attachment *attachment = 0;
+                struct sg_table *sg_table = 0;
+
 		if (copy_from_user(&alloc, (void __user *)arg, sizeof(alloc)))
 			return -EFAULT;
                 alloc.size = round_up(alloc.size, 4096);
                 struct ion_handle *handle = ion_alloc(portal_data->ion_client, alloc.size, 4096,
-                                                      1, ION_FLAG_CACHED_NEEDS_SYNC);
+                                                      1, 0);
+                printk("allocated ion_handle %p size %d\n", handle, alloc.size);
+                if (IS_ERR_VALUE(handle))
+                        return -EINVAL;
+
                 alloc.fd = ion_share_dma_buf(portal_data->ion_client, handle);
-                struct dma_buf *dma_buf = dma_buf_get(alloc.fd);
-                struct dma_buf_attachment *attachment = dma_buf_attach(dma_buf, miscdev->this_device);
-                struct sg_table *sg_table = dma_buf_map_attachment(attachment, DMA_TO_DEVICE);
+                dma_buf = dma_buf_get(alloc.fd);
+                attachment = dma_buf_attach(dma_buf, miscdev->this_device);
+                sg_table = dma_buf_map_attachment(attachment, DMA_TO_DEVICE);
                 
                 alloc.dma_address = sg_table->sgl[0].dma_address;
 
+                printk("kmap_cnt=%d\n", handle->kmap_cnt);
                 //sg_free_table(sg_table);
-                dma_buf_detach(dma_buf, attachment);
+                //dma_buf_detach(dma_buf, attachment);
 
                 if (copy_to_user((void __user *)arg, &alloc, sizeof(alloc)))
                         return -EFAULT;
@@ -185,7 +202,9 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 printk("%s: copying message body\n", __FUNCTION__);
 		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
-                printk("%s: writing args\n", __FUNCTION__);
+                printk("%s: writing args at address %lx\n",
+                       __FUNCTION__,
+                       portal_data->reg_base_phys + portal_data->fifo_offset_req_resp[0]);
                 for (i = 0; i < portal_data->fifo_offset_req_resp[1] / 4; i++) {
                         printk("arg %x %08x\n", i*4, buf[i]);
                         writel(buf[i], portal_data->reg_base_virt + portal_data->fifo_offset_req_resp[0]);
@@ -235,6 +254,29 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
         return -ENODEV;
 }
 
+/* maps the region containing the fifos */
+int portal_mmap(struct file *filep, struct vm_area_struct *vma)
+{
+	struct miscdevice *miscdev = filep->private_data;
+	struct portal_data *portal_data =
+                container_of(miscdev, struct portal_data, misc);
+	unsigned long off = portal_data->reg_base_phys + portal_data->fifo_offset_req_resp[0];
+	u32 len = 1 << PAGE_SHIFT;
+        if (!miscdev)
+                return -ENODEV;
+        if (vma->vm_pgoff > (~0UL >> PAGE_SHIFT))
+                return -EINVAL;
+        if ((vma->vm_end - vma->vm_start + (vma->vm_pgoff << PAGE_SHIFT)) > len)
+		return -EINVAL;
+	vma->vm_pgoff = off >> PAGE_SHIFT;
+	vma->vm_flags |= VM_IO | VM_RESERVED;
+        if (io_remap_pfn_range(vma, vma->vm_start, off >> PAGE_SHIFT,
+                               vma->vm_end - vma->vm_start, vma->vm_page_prot))
+                return -EAGAIN;
+        return 0;
+}
+
+
 unsigned int portal_poll (struct file *filep, poll_table *poll_table)
 {
 	struct miscdevice *miscdev = filep->private_data;
@@ -261,6 +303,7 @@ static int portal_release(struct inode *inode, struct file *filep)
 
 static const struct file_operations portal_fops = {
 	.open = portal_open,
+        .mmap = portal_mmap,
         .unlocked_ioctl = portal_unlocked_ioctl,
         .poll = portal_poll,
 	.release = portal_release,
