@@ -290,30 +290,6 @@
 			};
 		};
 
-		foolite0@0x63400000 {
-			compatible = "linux,ushw-bridge-0.01.a";
-			ip-major-revision = <0x0>;
-			ip-minor-revision = <0x1>;
-			ip-patch-revision = <0x0>;
-			interrupts = <0x0 0x3b 0x4>;
-			interrupt-parent = <&gic>;
-			reg = <0x63400000 0x400>;
-			device-name = "foolite0";
-		};
-
-		fooslave0@0x6AE00000 {
-			compatible = "linux,ushw-bridge-0.01.a";
-			ip-major-revision = <0x0>;
-			ip-minor-revision = <0x1>;
-			ip-patch-revision = <0x0>;
-			interrupts = <0x0 0x3a 0x4>;
-			interrupt-parent = <&gic>;
-			reg = <0x6ae00000 0x400>;
-			device-name = "fooslave0";
-			timer = <0x8 0x4>;
-			fifo = <0x100 0xc 0x8>;
-		};
-
 		foomaster0@0x6e400000 {
 			compatible = "linux,ushw-bridge-0.01.a";
 			ip-major-revision = <0x0>;
@@ -321,21 +297,9 @@
 			ip-patch-revision = <0x0>;
 			interrupts = <0x0 0x37 0x4>;
 			interrupt-parent = <&gic>;
-			reg = <0x6e400000 0x400>;
+			reg = <0x6e400000 0x2000>;
 			device-name = "foomaster0";
-			fifo = <0x100 0x8 0x8>;
-		};
-
-		foomaster1@0x6c200000 {
-			compatible = "linux,ushw-bridge-0.01.a";
-			ip-major-revision = <0x0>;
-			ip-minor-revision = <0x1>;
-			ip-patch-revision = <0x0>;
-			interrupts = <0x0 0x36 0x4>;
-			interrupt-parent = <&gic>;
-			reg = <0x6c200000 0x400>;
-			device-name = "foomaster1";
-			fifo = <0x100 0x8 0x8>;
+			fifo = <0x1000 0x8 0x8>;
 		};
 	};
 };
