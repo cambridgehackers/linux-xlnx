@@ -19,7 +19,11 @@
 typedef struct PortalAlloc {
         size_t size;
         int fd;
-        unsigned long dma_address;
+        struct {
+                unsigned long dma_address;
+                unsigned long length;
+        } entries[64];
+        int numEntries;
 } PortalAlloc;
 
 typedef struct PortalMessage {

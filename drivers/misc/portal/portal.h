@@ -35,11 +35,18 @@
 
 #define PORTAL_NAME_SZ 20
 
+struct portal_data;
+struct ion_client;
+
+struct portal_client {
+    struct portal_data *portal_data;
+    struct ion_client *ion_client;
+};
+
 struct portal_data {
 	struct device *dev;
         struct miscdevice misc;
         struct ion_device *ion_device;
-        struct ion_client *ion_client;
 	struct mutex reg_mutex;
         struct mutex completion_mutex;
         wait_queue_head_t wait_queue;
