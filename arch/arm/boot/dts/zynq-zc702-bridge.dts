@@ -299,7 +299,8 @@
 			interrupt-parent = <&gic>;
 			reg = <0x6e400000 0x2000>;
 			device-name = "foomaster0";
-			fifo = <0x1000 0x8 0x8>;
+			fifo = <0x1000 0x8 0x10>;
 		};
+
 	};
 };
