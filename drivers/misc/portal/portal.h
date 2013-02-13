@@ -53,13 +53,13 @@ struct portal_data {
         const char *device_name;
         dma_addr_t reg_base_phys;
         void      *reg_base_virt;
+        size_t fifo_base_offset;
 	unsigned short portal_flags;
 	unsigned char portal_irq;
 	unsigned char portal_use_ref;
         unsigned long int_status;
 
         u32 timer_values[2];
-        u32 fifo_offset_req_resp[3];
         u32 buf[128];
 };
 
@@ -69,7 +69,6 @@ struct portal_init_data {
 	unsigned long vmem_high_addr;
         const char *device_name;
         u32 timer_values[2];
-        u32 fifo_offset_req_resp[3];
 	unsigned short flags;
 	bool vmode_params_set;
 };

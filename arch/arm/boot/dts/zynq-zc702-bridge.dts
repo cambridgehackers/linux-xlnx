@@ -297,9 +297,8 @@
 			ip-patch-revision = <0x0>;
 			interrupts = <0x0 0x37 0x4>;
 			interrupt-parent = <&gic>;
-			reg = <0x6e400000 0x2000>;
+			reg = <0x6e400000 0x20000>;
 			device-name = "foomaster0";
-			fifo = <0x1000 0x8 0x10>;
 		};
 
 	};

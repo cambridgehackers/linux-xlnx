@@ -121,9 +121,13 @@ static int portal_open(struct inode *inode, struct file *filep)
         struct portal_client *portal_client =
                 (struct portal_client *)kzalloc(sizeof(struct portal_client), GFP_KERNEL);
 
+        portal_data->fifo_base_offset = readl(portal_data->reg_base_virt + 0x00C);
+        if (!portal_data->fifo_base_offset)
+                portal_data->fifo_base_offset = 0x10000; // default
+
         driver_devel("%s: %s ctrl %lx fifo %lx\n", __FUNCTION__, portal_data->device_name,
                      (long)portal_data->reg_base_phys,
-                     (long)(portal_data->reg_base_phys + portal_data->fifo_offset_req_resp[0]));
+                     (long)(portal_data->reg_base_phys + portal_data->fifo_base_offset));
         dump_regs("portal_open", portal_data);
 
         portal_client->ion_client = ion_client_create(portal_ion_device, 0xf, "portal_ion_client");
@@ -131,30 +135,19 @@ static int portal_open(struct inode *inode, struct file *filep)
         printk("portal created ion_client %p\n", portal_client->ion_client);
         filep->private_data = portal_client;
 
-        if (portal_client->ion_client) {
-                int i;
-                struct ion_client *ion_client = portal_client->ion_client;
-                struct ion_handle *handle = ion_alloc(ion_client, 4096, 0, 0xf, 0);
-                printk("allocated handle %p\n", handle);
-                int fd = ion_share_dma_buf(ion_client, handle);
-                printk("sharing dma_buf fd %d\n", fd);
-                void *mapping = ion_map_kernel(ion_client, handle);
-                printk("mapped handle %p\n", mapping);
-                struct dma_buf *dma_buf = dma_buf_get(fd);
-                printk("dma_buf %p\n", dma_buf);
-                struct dma_buf_attachment *attachment = dma_buf_attach(dma_buf, miscdev->this_device);
-                struct sg_table *sg_table = dma_buf_map_attachment(attachment, DMA_TO_DEVICE);
-                printk("sg_table %p nents %d\n", sg_table, sg_table->nents);
-                for (i = 0; i < sg_table->nents; i++) {
-                        printk("entry %d dma_address %x\n", i, sg_table->sgl[i].dma_address);
-                }
-                dma_buf_detach(dma_buf, attachment);
-        }
-
         // clear status
         writel(0, portal_data->reg_base_virt + 0);
         // enable interrupts
         writel(1, portal_data->reg_base_virt + 4);
+
+        // ask for vsync
+        printk("requesting vsync\n");
+        writel(1, portal_data->reg_base_virt 
+                + portal_data->fifo_base_offset
+                + 256 * 3 + 128);
+
+        dump_regs("interrupts enabled", portal_data);
+
 	return 0;
 }
 
@@ -217,71 +210,73 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                         return -EFAULT;
                 return 0;
         } break;
-	case PORTAL_PUTGET:
 	case PORTAL_PUT: {
                 PortalMessage msg;
                 unsigned int buf[128];
                 int i;
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
+                long fifo_phys = (long)(portal_data->reg_base_phys + portal_data->fifo_base_offset
+                                        + msg.channel * 256);
+                printk("%s: size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
+                       msg.size, msg.channel, fifo_phys);
                 if (0) printk("%s: copying message body\n", __FUNCTION__);
 		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
                 if (0) printk("%s: writing args at address %lx\n",
                               __FUNCTION__,
-                              (long)(portal_data->reg_base_phys + portal_data->fifo_offset_req_resp[0]));
+                              (long)(portal_data->reg_base_phys + portal_data->fifo_base_offset));
                 mutex_lock(&portal_data->reg_mutex);
-                for (i = 0; i < portal_data->fifo_offset_req_resp[1] / 4; i++) {
-                        printk("arg %x %08x\n", i*4, buf[i]);
-                        writel(buf[i], portal_data->reg_base_virt + portal_data->fifo_offset_req_resp[0]);
+                for (i = 0; i < msg.size / 4; i++) {
+                  //printk("arg %x %08x\n", i*4, buf[i]);
+                        writel(buf[i],
+                               portal_data->reg_base_virt 
+                               + portal_data->fifo_base_offset + msg.channel * 256 + 128);
                 }
                 mutex_unlock(&portal_data->reg_mutex);
                 //dump_regs("PUT", portal_data);
-                if (cmd == PORTAL_PUTGET) {
-                        printk("%s: PUTGET acquiring completion_mutex\n", __FUNCTION__);
-                        mutex_lock_interruptible(&portal_data->completion_mutex);
-                        if (0)
-                        for (i = 0; i < portal_data->fifo_offset_req_resp[2] / 4; i++) {
-                                printk("%s: result %x %08x\n", __FUNCTION__, i*4, portal_data->buf[i]);
-                        }
-                        if (msg.size)
-                          if (copy_to_user((void __user *)arg+sizeof(msg),
-                                           portal_data->buf, portal_data->fifo_offset_req_resp[2]))
-                                        return -EFAULT;
-                }
                 return 0;
         } break;
 	case PORTAL_GET: {
-                PortalMessage msg;
-                int int_status = readl(portal_data->reg_base_virt + 0);
+                PortalMessageWithPayload msg;
+                int int_status = readl(portal_data->reg_base_virt + 0x00);
+                int queue_status = readl(portal_data->reg_base_virt + 0x30);
                 int mask = 0;
-                printk("%s: GET int_status=%x mask=%x\n", __FUNCTION__, int_status, mask);
-                if (int_status & 1 == 0)
+                printk("%s: GET int_status=%x mask=%x queue_status=%x\n",
+                       __FUNCTION__, int_status, mask, queue_status);
+                if ((int_status & 1) == 0)
                         return -EAGAIN;
+                // we need to know how big the buffer is
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
 
                 //dump_regs("GET", portal_data);
                 mutex_lock(&portal_data->reg_mutex);
-                if (portal_data->fifo_offset_req_resp[0]) {
-                        int i;
-                        for (i = 0; i < portal_data->fifo_offset_req_resp[2]/4; i++) {
-                                portal_data->buf[i] = 
-                                        readl(portal_data->reg_base_virt
-                                              + portal_data->fifo_offset_req_resp[0]);
-                                //printk("%s: result %x %08x\n", __FUNCTION__, i*4, portal_data->buf[i]);
+                if (portal_data->fifo_base_offset) {
+                        int c;
+                        for (c = 0; c < 32; c++) {
+                                if ((queue_status & (1 << c)) == 0)
+                                        continue;
+                                msg.pm.size = readl(portal_data->reg_base_virt
+                                                    + portal_data->fifo_base_offset
+                                                    + c * 256) * 4;
+                                int i;
+                                for (i = 0; i < msg.pm.size/4; i++) {
+                                        msg.payload[i] = 
+                                                readl(portal_data->reg_base_virt
+                                                      + portal_data->fifo_base_offset
+                                                      + c * 256 + 128);
+                                        printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
+                                }
+                                break;
                         }
                 }
                 mutex_unlock(&portal_data->reg_mutex);
 
                 if (copy_to_user((void __user *)arg,
-                                 &portal_data->fifo_offset_req_resp[2],
-                                 sizeof(portal_data->fifo_offset_req_resp[2])))
+                                 &msg,
+                                 sizeof(PortalMessage) + msg.pm.size))
                         return -EFAULT;
-                if (portal_data->fifo_offset_req_resp[2])
-                        if (copy_to_user((void __user *)arg+sizeof(msg),
-                                         portal_data->buf, portal_data->fifo_offset_req_resp[2]))
-                                return -EFAULT;
                 return 0;
         } break;
         default:
@@ -297,7 +292,7 @@ int portal_mmap(struct file *filep, struct vm_area_struct *vma)
 {
 	struct portal_client *portal_client = filep->private_data;
 	struct portal_data *portal_data = portal_client->portal_data;
-	unsigned long off = portal_data->reg_base_phys + portal_data->fifo_offset_req_resp[0];
+	unsigned long off = portal_data->reg_base_phys + portal_data->fifo_base_offset;
 	u32 len = 1 << PAGE_SHIFT;
         if (!portal_client)
                 return -ENODEV;
@@ -330,7 +325,6 @@ unsigned int portal_poll (struct file *filep, poll_table *poll_table)
 static int portal_release(struct inode *inode, struct file *filep)
 {
 	struct portal_client *portal_client = filep->private_data;
-	struct portal_data *portal_data = portal_client->portal_data;
 	driver_devel("%s inode=%p filep=%p\n", __func__, inode, filep);
         ion_client_destroy(portal_client->ion_client);
         kfree(portal_client);
@@ -377,8 +371,6 @@ int portal_init_driver(struct portal_init_data *init_data)
 	}
         portal_data->device_name = init_data->device_name;
         memcpy(portal_data->timer_values, init_data->timer_values, sizeof(init_data->timer_values));
-        memcpy(portal_data->fifo_offset_req_resp,
-               init_data->fifo_offset_req_resp, sizeof(init_data->fifo_offset_req_resp));
 
 	reg_base_phys = reg_res->start;
 	reg_range = reg_res->end - reg_res->start;
@@ -469,13 +461,6 @@ static int portal_parse_hw_info(struct device_node *np,
                                             sizeof(init_data->timer_values)/sizeof(u32));
         if (!status)
                 driver_devel("%s: timer=%x %d\n", DRIVER_NAME, init_data->timer_values[0], init_data->timer_values[1]);
-	status = of_property_read_u32_array(np, "fifo", init_data->fifo_offset_req_resp,
-                                            sizeof(init_data->fifo_offset_req_resp)/sizeof(u32));
-        if (!status)
-                driver_devel("%s: fifo=%x %d %d\n", DRIVER_NAME,
-                             init_data->fifo_offset_req_resp[0],
-                             init_data->fifo_offset_req_resp[1],
-                             init_data->fifo_offset_req_resp[2]);
 	return 0;
 }
 

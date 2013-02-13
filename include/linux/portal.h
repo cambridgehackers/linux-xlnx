@@ -28,7 +28,13 @@ typedef struct PortalAlloc {
 
 typedef struct PortalMessage {
     size_t size;
+    size_t channel;
 } PortalMessage;
+
+typedef struct PortalMessageWithPayload {
+    PortalMessage pm;
+    int payload[128];
+} PortalMessageWithPayload;
 
 #define PORTAL_ALLOC _IOWR('B', 10, PortalAlloc)
 #define PORTAL_PUTGET _IOWR('B', 17, PortalMessage)
