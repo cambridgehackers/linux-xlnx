@@ -218,6 +218,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 			return -EFAULT;
                 long fifo_phys = (long)(portal_data->reg_base_phys + portal_data->fifo_base_offset
                                         + msg.channel * 256);
+                if (0)
                 printk("%s: size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
                        msg.size, msg.channel, fifo_phys);
                 if (0) printk("%s: copying message body\n", __FUNCTION__);
@@ -242,6 +243,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 int int_status = readl(portal_data->reg_base_virt + 0x00);
                 int queue_status = readl(portal_data->reg_base_virt + 0x30);
                 int mask = 0;
+                if (0)
                 printk("%s: GET int_status=%x mask=%x queue_status=%x\n",
                        __FUNCTION__, int_status, mask, queue_status);
                 if ((int_status & 1) == 0)
@@ -255,18 +257,24 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 if (portal_data->fifo_base_offset) {
                         int c;
                         for (c = 0; c < 32; c++) {
+                                int i;
                                 if ((queue_status & (1 << c)) == 0)
                                         continue;
+                                if (0)
+                                printk("Reading FIFO %d size at %lx\n",
+                                       c, portal_data->reg_base_phys + portal_data->fifo_base_offset
+                                       + c * 256);
+                                msg.pm.channel = c;
                                 msg.pm.size = readl(portal_data->reg_base_virt
                                                     + portal_data->fifo_base_offset
                                                     + c * 256) * 4;
-                                int i;
+                                //printk("msg.size=%d\n", msg.pm.size, count);
                                 for (i = 0; i < msg.pm.size/4; i++) {
                                         msg.payload[i] = 
                                                 readl(portal_data->reg_base_virt
                                                       + portal_data->fifo_base_offset
                                                       + c * 256 + 128);
-                                        printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
+                                        //printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
                                 }
                                 break;
                         }
