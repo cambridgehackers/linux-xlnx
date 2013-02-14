@@ -498,7 +498,8 @@ static int portal_of_remove(struct platform_device *pdev)
 
 
 static struct of_device_id portal_of_match[] __devinitdata = {
-	{ .compatible = "linux,ushw-bridge-0.01.a" },
+	{ .compatible = "linux,ushw-bridge-0.01.a" }, /* old name */
+	{ .compatible = "linux,portal-0.01.a" },
 	{/* end of table */},
 };
 MODULE_DEVICE_TABLE(of, portal_of_match);
