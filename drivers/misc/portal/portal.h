@@ -52,7 +52,9 @@ struct portal_data {
         wait_queue_head_t wait_queue;
         const char *device_name;
         dma_addr_t reg_base_phys;
+        dma_addr_t fifo_base_phys;
         void      *reg_base_virt;
+        void      *fifo_base_virt;
         size_t fifo_base_offset;
 	unsigned short portal_flags;
 	unsigned char portal_irq;
