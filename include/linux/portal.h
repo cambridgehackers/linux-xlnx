@@ -36,11 +36,18 @@ typedef struct PortalMessageWithPayload {
     int payload[128];
 } PortalMessageWithPayload;
 
+typedef struct PortalMessage {
+    int clknum;
+    long requested_rate;
+    long actual_rate;
+} PortalClockRequest;
+
 #define PORTAL_ALLOC _IOWR('B', 10, PortalAlloc)
 #define PORTAL_PUTGET _IOWR('B', 17, PortalMessage)
 #define PORTAL_PUT _IOWR('B', 18, PortalMessage)
 #define PORTAL_GET _IOWR('B', 19, PortalMessage)
 #define PORTAL_REGS _IOWR('B', 20, PortalMessage)
+#define PORTAL_SET_FCLK_RATE _IOWR('B', 40, PortalClockRequest)
 
 #endif
 

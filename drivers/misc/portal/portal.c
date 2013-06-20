@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include "portal.h"
 #include <linux/portal.h>
+#include <linux/clk.h>
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
@@ -277,6 +278,29 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                         return -EFAULT;
                 return 0;
         } break;
+	case PORTAL_SET_FCLK_RATE: {
+		PortalClockRequest request;
+		int clknum = 1;
+		char clkname[8];
+		int status = 0;
+		struct clk *fclk = NULL;
+
+		if (copy_from_user(&request, (void __user *)arg, sizeof(request)))
+			return -EFAULT;
+
+		snprintf(clkname, sizeof(clkname), "FPGA%d", request.clknum);
+		fclk = clk_get_sys(clkname, NULL);
+		printk(KERN_INFO "[%s:%d] fclk %s %p\n", __FUNCTION__, __LINE__, clkname, fclk);
+		request.actual_rate = clk_round_rate(fclk, request.requested_rate);
+		printk(KERN_INFO "[%s:%d] requested rage %ld actual rate %ld\n", __FUNCTION__, __LINE__, arg, rate);
+		if ((status = clk_set_rate(fclk, request.actual_rate))) {
+			printk(KERN_INFO "[%s:%d] err\n", __FUNCTION__, __LINE__);
+			return status;
+		}
+                if (copy_to_user((void __user *)arg, &request, sizeof(request)))
+                        return -EFAULT;
+		return status;
+	} break;
         default:
                 printk("portal_unlocked_ioctl ENOTTY cmd=%x\n", cmd);
                 return -ENOTTY;
