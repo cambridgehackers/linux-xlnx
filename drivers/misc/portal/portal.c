@@ -280,7 +280,6 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
         } break;
 	case PORTAL_SET_FCLK_RATE: {
 		PortalClockRequest request;
-		int clknum = 1;
 		char clkname[8];
 		int status = 0;
 		struct clk *fclk = NULL;
@@ -292,7 +291,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 		fclk = clk_get_sys(clkname, NULL);
 		printk(KERN_INFO "[%s:%d] fclk %s %p\n", __FUNCTION__, __LINE__, clkname, fclk);
 		request.actual_rate = clk_round_rate(fclk, request.requested_rate);
-		printk(KERN_INFO "[%s:%d] requested rage %ld actual rate %ld\n", __FUNCTION__, __LINE__, arg, rate);
+		printk(KERN_INFO "[%s:%d] requested rage %ld actual rate %ld\n", __FUNCTION__, __LINE__, request.requested_rate, request.actual_rate);
 		if ((status = clk_set_rate(fclk, request.actual_rate))) {
 			printk(KERN_INFO "[%s:%d] err\n", __FUNCTION__, __LINE__);
 			return status;

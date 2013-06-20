@@ -36,7 +36,7 @@ typedef struct PortalMessageWithPayload {
     int payload[128];
 } PortalMessageWithPayload;
 
-typedef struct PortalMessage {
+typedef struct PortalClockRequest {
     int clknum;
     long requested_rate;
     long actual_rate;
