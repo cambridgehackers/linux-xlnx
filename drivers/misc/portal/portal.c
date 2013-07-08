@@ -140,7 +140,7 @@ static int portal_open(struct inode *inode, struct file *filep)
         // enable interrupts
         writel(1, portal_data->reg_base_virt + 4);
 
-        dump_regs("interrupts enabled", portal_data);
+        //dump_regs("interrupts enabled", portal_data);
 
 	return 0;
 }
@@ -290,8 +290,10 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 		snprintf(clkname, sizeof(clkname), "FPGA%d", request.clknum);
 		fclk = clk_get_sys(clkname, NULL);
 		printk(KERN_INFO "[%s:%d] fclk %s %p\n", __FUNCTION__, __LINE__, clkname, fclk);
+		if (!fclk)
+			return -ENODEV;
 		request.actual_rate = clk_round_rate(fclk, request.requested_rate);
-		printk(KERN_INFO "[%s:%d] requested rage %ld actual rate %ld\n", __FUNCTION__, __LINE__, request.requested_rate, request.actual_rate);
+		printk(KERN_INFO "[%s:%d] requested rate %ld actual rate %ld\n", __FUNCTION__, __LINE__, request.requested_rate, request.actual_rate);
 		if ((status = clk_set_rate(fclk, request.actual_rate))) {
 			printk(KERN_INFO "[%s:%d] err\n", __FUNCTION__, __LINE__);
 			return status;
@@ -405,12 +407,16 @@ int portal_init_driver(struct portal_init_data *init_data)
 
 	status = of_property_read_u32_array(init_data->pdev->dev.of_node,
 					    "fifo", fifo_base_size, 2);
-        if (status)
+        if (status) {
 		driver_devel("failed to get fifo address");
-
-	fifo_base_phys = fifo_base_size[0];
-	fifo_range = fifo_base_size[1];
-	fifo_base_virt = ioremap_nocache(fifo_base_phys, fifo_range);
+		fifo_base_phys = reg_base_phys + 0x10000;
+		fifo_range = 0x10000;
+		fifo_base_virt = ioremap_nocache(fifo_base_phys, fifo_range);
+	} else {
+		fifo_base_phys = fifo_base_size[0];
+		fifo_range = fifo_base_size[1];
+		fifo_base_virt = ioremap_nocache(fifo_base_phys, fifo_range);
+	}
         pr_info("%s fifo_base phys %x/%x virt %p\n",
                 portal_data->device_name,
                 fifo_base_phys, fifo_range, fifo_base_virt);
