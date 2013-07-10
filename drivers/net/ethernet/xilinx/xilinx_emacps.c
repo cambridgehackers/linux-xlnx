@@ -2698,7 +2698,10 @@ static int xemacps_probe(struct platform_device *pdev)
 
 	macaddr = of_get_property(lp->pdev->dev.of_node, "local-mac-address", &macsize);
 	if (macaddr && macsize == 6) {
-		xemacps_set_mac_address(ndev, (void *) macaddr);
+		struct sockaddr hwaddr;
+                hwaddr.sa_family = 0;
+		memcpy(hwaddr.sa_data, macaddr, macsize);
+		xemacps_set_mac_address(ndev, (void *) &hwaddr);
 	}
 	lp->phy_node = of_parse_phandle(lp->pdev->dev.of_node,
 						"phy-handle", 0);
