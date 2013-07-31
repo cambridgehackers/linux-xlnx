@@ -96,18 +96,22 @@ static void dump_regs(const char *prefix, struct portal_data *portal_data)
 static irqreturn_t portal_isr(int irq, void *dev_id)
 {
 	struct portal_data *portal_data = (struct portal_data *)dev_id;
-	u32 isr;
+	u32 int_src, int_en;
 
 
-        isr = readl(portal_data->reg_base_virt + 0);
-	driver_devel("%s IRQ %d %x\n", __func__, irq, isr);
-        // clear it
-        if (!isr)
-                isr = 1;
-        portal_data->int_status = isr;
-        writel(isr, portal_data->reg_base_virt + 0);
+        dump_regs("ISR a", portal_data);
 
-        dump_regs("ISR", portal_data);
+        int_src = readl(portal_data->reg_base_virt + 0);
+	int_en  = readl(portal_data->reg_base_virt + 4);
+	driver_devel("%s IRQ %d %x %x\n", __func__, irq, int_src, int_en);
+
+        portal_data->int_status = 1;
+
+	// disable interrupt.  this will be enabled by user mode 
+	// driver  after all the HW->SW FIFOs have been emptied
+        writel(0, portal_data->reg_base_virt + 0x4);
+
+        dump_regs("ISR b", portal_data);
         mutex_unlock(&portal_data->completion_mutex);
 	wake_up_interruptible(&portal_data->wait_queue);
 
@@ -128,19 +132,20 @@ static int portal_open(struct inode *inode, struct file *filep)
 
         driver_devel("%s: %s ctrl %lx fifo %lx\n", __FUNCTION__, portal_data->device_name,
                      (long)portal_data->reg_base_phys, (long)(portal_data->fifo_base_phys));
-        dump_regs("portal_open", portal_data);
+        // dump_regs("portal_open", portal_data);
 
         portal_client->ion_client = ion_client_create(portal_ion_device, 0xf, "portal_ion_client");
         portal_client->portal_data = portal_data;
         printk("portal created ion_client %p\n", portal_client->ion_client);
         filep->private_data = portal_client;
 
-        // clear status
+        // clear status (ignored by HW)
         writel(0, portal_data->reg_base_virt + 0);
         // enable interrupts
         writel(1, portal_data->reg_base_virt + 4);
 
-        //dump_regs("interrupts enabled", portal_data);
+	// sanity check, see if interrupts have been enabled
+        dump_regs("enable interrupts", portal_data);
 
 	return 0;
 }
@@ -234,7 +239,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 	case PORTAL_GET: {
                 PortalMessageWithPayload msg;
                 int int_status = readl(portal_data->reg_base_virt + 0x00);
-                int queue_status = readl(portal_data->reg_base_virt + 0x30);
+                int queue_status = readl(portal_data->reg_base_virt + 0x40);
                 int mask = 0;
                 if (0)
                 printk("%s: GET int_status=%x mask=%x queue_status=%x\n",
@@ -310,24 +315,33 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
         return -ENODEV;
 }
 
-/* maps the region containing the fifos */
+/* maps the region containing the fifos and registers */
 int portal_mmap(struct file *filep, struct vm_area_struct *vma)
 {
 	struct portal_client *portal_client = filep->private_data;
 	struct portal_data *portal_data = portal_client->portal_data;
-	unsigned long off = portal_data->fifo_base_phys;
-	u32 len = 1 << PAGE_SHIFT;
+	unsigned long off = portal_data->reg_base_phys;
+
+	// no reason to ask for anything other than first, second, or both pages
+	unsigned long req_len = vma->vm_end - vma->vm_start + (vma->vm_pgoff << PAGE_SHIFT);
+        if (!(req_len == (1 << PAGE_SHIFT) || req_len == (2 << PAGE_SHIFT)))
+	        return -EINVAL;
+
         if (!portal_client)
                 return -ENODEV;
         if (vma->vm_pgoff > (~0UL >> PAGE_SHIFT))
                 return -EINVAL;
-        if ((vma->vm_end - vma->vm_start + (vma->vm_pgoff << PAGE_SHIFT)) > len)
-		return -EINVAL;
+
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	vma->vm_pgoff = off >> PAGE_SHIFT;
 	vma->vm_flags |= VM_IO | VM_RESERVED;
         if (io_remap_pfn_range(vma, vma->vm_start, off >> PAGE_SHIFT,
                                vma->vm_end - vma->vm_start, vma->vm_page_prot))
                 return -EAGAIN;
+
+        printk("%s req_len=%lx off=%lx\n", __FUNCTION__, req_len, off);
+	//dump_regs(__FUNCTION__, portal_data);
+
         return 0;
 }
 
