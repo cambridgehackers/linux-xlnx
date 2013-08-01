@@ -99,11 +99,11 @@ static irqreturn_t portal_isr(int irq, void *dev_id)
 	u32 int_src, int_en;
 
 
-        dump_regs("ISR a", portal_data);
+        //dump_regs("ISR a", portal_data);
 
         int_src = readl(portal_data->reg_base_virt + 0);
 	int_en  = readl(portal_data->reg_base_virt + 4);
-	driver_devel("%s IRQ %d %x %x\n", __func__, irq, int_src, int_en);
+	//driver_devel("%s IRQ %d %x %x\n", __func__, irq, int_src, int_en);
 
         portal_data->int_status = 1;
 
@@ -111,7 +111,7 @@ static irqreturn_t portal_isr(int irq, void *dev_id)
 	// driver  after all the HW->SW FIFOs have been emptied
         writel(0, portal_data->reg_base_virt + 0x4);
 
-        dump_regs("ISR b", portal_data);
+        //dump_regs("ISR b", portal_data);
         mutex_unlock(&portal_data->completion_mutex);
 	wake_up_interruptible(&portal_data->wait_queue);
 
