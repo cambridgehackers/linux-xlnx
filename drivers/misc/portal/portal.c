@@ -170,13 +170,13 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 struct dma_buf_attachment *attachment = 0;
                 struct sg_table *sg_table = 0;
                 struct scatterlist *sg;
+                struct ion_handle *handle;
                 int i;
 
 		if (copy_from_user(&alloc, (void __user *)arg, sizeof(alloc)))
 			return -EFAULT;
                 alloc.size = round_up(alloc.size, 4096);
-                struct ion_handle *handle = ion_alloc(portal_client->ion_client, alloc.size, 4096,
-                                                      0xf, 0);
+                handle = ion_alloc(portal_client->ion_client, alloc.size, 4096, 0xf, 0);
                 printk("allocated ion_handle %p size %d\n", handle, alloc.size);
                 if (IS_ERR_VALUE((long)handle))
                         return -EINVAL;
@@ -213,10 +213,10 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 PortalMessage msg;
                 unsigned int buf[128];
                 int i;
+                long fifo_phys;
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
-                long fifo_phys = (long)(portal_data->fifo_base_phys
-                                        + msg.channel * 256);
+                fifo_phys = (long)(portal_data->fifo_base_phys + msg.channel * 256);
                 if (0)
                 printk("%s: size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
                        msg.size, msg.channel, fifo_phys);
@@ -260,7 +260,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                                         continue;
                                 if (0)
                                 printk("Reading FIFO %d size at %lx\n",
-                                       c, portal_data->fifo_base_phys
+                                       c, (long)portal_data->fifo_base_phys
                                        + c * 256);
                                 msg.pm.channel = c;
                                 msg.pm.size = readl(portal_data->fifo_base_virt
