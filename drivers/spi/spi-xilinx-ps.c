@@ -155,7 +155,7 @@ static void xspips_init_hw(void __iomem *regs_base)
 		xspips_read(regs_base + XSPIPS_RXD_OFFSET);
 
 	xspips_write(regs_base + XSPIPS_ISR_OFFSET, 0x7F);
-	xspips_write(regs_base + XSPIPS_CR_OFFSET, 0x0000FC01);
+	xspips_write(regs_base + XSPIPS_CR_OFFSET, 0x00027C01); //0x0000FC01);
 	xspips_write(regs_base + XSPIPS_ER_OFFSET, XSPIPS_ER_ENABLE_MASK);
 }
 
