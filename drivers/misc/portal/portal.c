@@ -37,6 +37,8 @@
 #include <linux/scatterlist.h>
 #include "../../gpu/ion/ion_priv.h"
 
+#include <asm/cacheflush.h>
+
 struct ion_device *portal_ion_device;
 struct ion_heap *portal_ion_heap[2]; 
 
@@ -145,7 +147,7 @@ static int portal_open(struct inode *inode, struct file *filep)
         writel(1, portal_data->reg_base_virt + 4);
 
 	// sanity check, see if interrupts have been enabled
-        dump_regs("enable interrupts", portal_data);
+        // dump_regs("enable interrupts", portal_data);
 
 	return 0;
 }
@@ -164,13 +166,30 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 	struct portal_data *portal_data = portal_client->portal_data;
 
         switch (cmd) {
+	case PORTAL_DCACHE_FLUSH_INVAL: {
+	  struct PortalAlloc alloc;
+	  int i;
+	  if (copy_from_user(&alloc, (void __user *)arg, sizeof(alloc)))
+	    return -EFAULT;
+	  //printk("portal_dcache_flush_inval\n");
+	  for(i = 0; i < alloc.numEntries; i++){
+	    char* start_addr = alloc.entries[i].dma_address;
+	    unsigned int length = alloc.entries[i].length;
+	    char* end_addr = start_addr + length;
+	    //printk("portal_dcache_flush_inval[%d] %08x %d\n", i, start_addr, length);
+	    // we saw this funciton invoked in arch/arm/mm/dma-mapping.c it works on physical addresses.
+	    outer_clean_range(alloc.entries[i].dma_address, alloc.entries[i].dma_address+alloc.entries[i].length);
+	    outer_inv_range(alloc.entries[i].dma_address, alloc.entries[i].dma_address+alloc.entries[i].length);
+	  }
+	  return 0;
+	}
         case PORTAL_ALLOC: {
                 struct PortalAlloc alloc;
                 struct dma_buf *dma_buf = 0;
                 struct dma_buf_attachment *attachment = 0;
                 struct sg_table *sg_table = 0;
                 struct scatterlist *sg;
-                struct ion_handle *handle;
+		struct ion_handle* handle;
                 int i;
 
 		if (copy_from_user(&alloc, (void __user *)arg, sizeof(alloc)))
@@ -180,7 +199,6 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 printk("allocated ion_handle %p size %d\n", handle, alloc.size);
                 if (IS_ERR_VALUE((long)handle))
                         return -EINVAL;
-
                 alloc.fd = ion_share_dma_buf(portal_client->ion_client, handle);
                 dma_buf = dma_buf_get(alloc.fd);
                 attachment = dma_buf_attach(dma_buf, portal_client->portal_data->misc.this_device);
@@ -340,7 +358,8 @@ int portal_mmap(struct file *filep, struct vm_area_struct *vma)
                 return -EAGAIN;
 
         printk("%s req_len=%lx off=%lx\n", __FUNCTION__, req_len, off);
-	//dump_regs(__FUNCTION__, portal_data);
+	if(0)
+	  dump_regs(__FUNCTION__, portal_data);
 
         return 0;
 }
@@ -388,7 +407,7 @@ int portal_init_driver(struct portal_init_data *init_data)
 	int reg_range, fifo_range;
 	int status = 0, rc = 0;
 	driver_devel("%s\n", __func__);
-
+	driver_devel("%s relies on a custom modification to arch/arm/mm/cache-v7.S:ENTRY(v7_coherent_user_range)", __func__);
 	dev = &init_data->pdev->dev;
 
         if (!portal_ion_device)
