@@ -102,16 +102,16 @@ static irqreturn_t portal_isr(int irq, void *dev_id)
 	u32 int_src, int_en;
 
 
-        dump_ind_regs("ISR a", portal_data);
+        //dump_ind_regs("ISR a", portal_data);
         int_src = readl(portal_data->ind_reg_base_virt + 0);
 	int_en  = readl(portal_data->ind_reg_base_virt + 4);
-	driver_devel("%s IRQ %d %x %x\n", __func__, irq, int_src, int_en);
+	driver_devel("%s IRQ %s %d %x %x\n", __func__, portal_data->device_name, irq, int_src, int_en);
 
 	// disable interrupt.  this will be enabled by user mode 
 	// driver  after all the HW->SW FIFOs have been emptied
         writel(0, portal_data->ind_reg_base_virt + 0x4);
 
-        dump_ind_regs("ISR b", portal_data);
+        //dump_ind_regs("ISR b", portal_data);
         mutex_unlock(&portal_data->completion_mutex);
 	wake_up_interruptible(&portal_data->wait_queue);
 
@@ -231,8 +231,8 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 			return -EFAULT;
                 fifo_phys = (long)(portal_data->req_fifo_base_phys + msg.channel * 256);
                 //if (0)
-                printk("%s: PUT size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
-                       msg.size, msg.channel, fifo_phys);
+                printk("%s: PUT %s size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
+                       portal_data->device_name, msg.size, msg.channel, fifo_phys);
                 if (0) printk("%s: copying message body\n", __FUNCTION__);
 		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
@@ -241,7 +241,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 		       __FUNCTION__, fifo_phys);
                 mutex_lock(&portal_data->reg_mutex);
                 for (i = 0; i < msg.size / 4; i++) {
-                  printk("arg %x %08x\n", i*4, buf[i]);
+                  //printk("arg %x %08x\n", i*4, buf[i]);
 		  writel(buf[i], portal_data->req_fifo_base_virt + msg.channel * 256);
                 }
 		printk("finished write\n");
@@ -255,8 +255,8 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 int queue_status = readl(portal_data->ind_reg_base_virt + 0x20);
                 int mask = 0;
                 //if (0)
-                printk("%s: GET int_status=%x mask=%x queue_status=%x\n",
-                       __FUNCTION__, int_status, mask, queue_status);
+                printk("%s: GET %s int_status=%x mask=%x queue_status=%x\n",
+                       __FUNCTION__, portal_data->device_name, int_status, mask, queue_status);
                 if ((int_status & 1) == 0)
                         return -EAGAIN;
                 // we need to know how big the buffer is
@@ -362,7 +362,7 @@ unsigned int portal_poll (struct file *filep, poll_table *poll_table)
         poll_wait(filep, &portal_data->wait_queue, poll_table);
         if (int_status & 1)
                 mask = POLLIN | POLLRDNORM;
-        printk("%s: int_status=%x mask=%x\n", __FUNCTION__, int_status, mask);
+        printk("%s: %s int_status=%x mask=%x\n", __FUNCTION__, portal_data->device_name, int_status, mask);
         return mask;
 }
 
