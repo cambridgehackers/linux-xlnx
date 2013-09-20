@@ -39,6 +39,7 @@
 
 #include <asm/cacheflush.h>
 
+
 struct ion_device *portal_ion_device;
 struct ion_heap *portal_ion_heap[2]; 
 
@@ -84,12 +85,12 @@ void portal_ion_release(void)
         }
 }
 
-static void dump_regs(const char *prefix, struct portal_data *portal_data)
+static void dump_ind_regs(const char *prefix, struct portal_data *portal_data)
 {
         int i;
-        for (i = 0; i < 20; i++) {
+        for (i = 0; i < 10; i++) {
                 unsigned long regval;
-                regval = readl(portal_data->reg_base_virt + i*4);
+                regval = readl(portal_data->ind_reg_base_virt + i*4);
                 driver_devel("%s reg %x value %08lx\n", prefix,
                              i*4, regval);
         }
@@ -101,19 +102,16 @@ static irqreturn_t portal_isr(int irq, void *dev_id)
 	u32 int_src, int_en;
 
 
-        //dump_regs("ISR a", portal_data);
-
-        int_src = readl(portal_data->reg_base_virt + 0);
-	int_en  = readl(portal_data->reg_base_virt + 4);
-	//driver_devel("%s IRQ %d %x %x\n", __func__, irq, int_src, int_en);
-
-        portal_data->int_status = 1;
+        dump_ind_regs("ISR a", portal_data);
+        int_src = readl(portal_data->ind_reg_base_virt + 0);
+	int_en  = readl(portal_data->ind_reg_base_virt + 4);
+	driver_devel("%s IRQ %d %x %x\n", __func__, irq, int_src, int_en);
 
 	// disable interrupt.  this will be enabled by user mode 
 	// driver  after all the HW->SW FIFOs have been emptied
-        writel(0, portal_data->reg_base_virt + 0x4);
+        writel(0, portal_data->ind_reg_base_virt + 0x4);
 
-        //dump_regs("ISR b", portal_data);
+        dump_ind_regs("ISR b", portal_data);
         mutex_unlock(&portal_data->completion_mutex);
 	wake_up_interruptible(&portal_data->wait_queue);
 
@@ -128,26 +126,25 @@ static int portal_open(struct inode *inode, struct file *filep)
         struct portal_client *portal_client =
                 (struct portal_client *)kzalloc(sizeof(struct portal_client), GFP_KERNEL);
 
-        portal_data->fifo_base_offset = readl(portal_data->reg_base_virt + 0x00C);
-        if (!portal_data->fifo_base_offset)
-                portal_data->fifo_base_offset = 0x10000; // default
+        driver_devel("%s: %s ind_reg_base_phys %lx ind_fifo_base_phys %lx\n", __FUNCTION__, portal_data->device_name,
+                     (long)portal_data->ind_reg_base_phys, (long)(portal_data->ind_fifo_base_phys));
+        driver_devel("%s: %s req_reg_base_phys %lx req_fifo_base_phys %lx\n", __FUNCTION__, portal_data->device_name,
+                     (long)portal_data->req_reg_base_phys, (long)(portal_data->req_fifo_base_phys));
 
-        driver_devel("%s: %s ctrl %lx fifo %lx\n", __FUNCTION__, portal_data->device_name,
-                     (long)portal_data->reg_base_phys, (long)(portal_data->fifo_base_phys));
-        // dump_regs("portal_open", portal_data);
+        dump_ind_regs("portal_open", portal_data);
 
         portal_client->ion_client = ion_client_create(portal_ion_device, 0xf, "portal_ion_client");
         portal_client->portal_data = portal_data;
         printk("portal created ion_client %p\n", portal_client->ion_client);
         filep->private_data = portal_client;
 
-        // clear status (ignored by HW)
-        writel(0, portal_data->reg_base_virt + 0);
-        // enable interrupts
-        writel(1, portal_data->reg_base_virt + 4);
+        // clear indication status (ignored by HW)
+        writel(0, portal_data->ind_reg_base_virt + 0);
+        // enable indication interrupts
+        writel(1, portal_data->ind_reg_base_virt + 4);
 
 	// sanity check, see if interrupts have been enabled
-        // dump_regs("enable interrupts", portal_data);
+        dump_ind_regs("enable interrupts", portal_data);
 
 	return 0;
 }
@@ -164,7 +161,6 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 {
 	struct portal_client *portal_client = filep->private_data;
 	struct portal_data *portal_data = portal_client->portal_data;
-
         switch (cmd) {
 	case PORTAL_DCACHE_FLUSH_INVAL: {
 	  struct PortalAlloc alloc;
@@ -173,13 +169,12 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 	    return -EFAULT;
 	  //printk("portal_dcache_flush_inval\n");
 	  for(i = 0; i < alloc.numEntries; i++){
-	    char* start_addr = alloc.entries[i].dma_address;
-	    unsigned int length = alloc.entries[i].length;
-	    char* end_addr = start_addr + length;
-	    //printk("portal_dcache_flush_inval[%d] %08x %d\n", i, start_addr, length);
+	    unsigned int start_addr = alloc.entries[i].dma_address;
+	    unsigned int end_addr = start_addr + alloc.entries[i].length;
+	    // printk("portal_dcache_flush_inval[%d] %08x %d\n", i, start_addr, end_addr);
 	    // we saw this funciton invoked in arch/arm/mm/dma-mapping.c it works on physical addresses.
-	    outer_clean_range(alloc.entries[i].dma_address, alloc.entries[i].dma_address+alloc.entries[i].length);
-	    outer_inv_range(alloc.entries[i].dma_address, alloc.entries[i].dma_address+alloc.entries[i].length);
+	    outer_clean_range(start_addr, end_addr);
+	    outer_inv_range(start_addr, end_addr);
 	  }
 	  return 0;
 	}
@@ -234,32 +229,32 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 long fifo_phys;
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
-                fifo_phys = (long)(portal_data->fifo_base_phys + msg.channel * 256);
-                if (0)
-                printk("%s: size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
+                fifo_phys = (long)(portal_data->req_fifo_base_phys + msg.channel * 256);
+                //if (0)
+                printk("%s: PUT size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
                        msg.size, msg.channel, fifo_phys);
                 if (0) printk("%s: copying message body\n", __FUNCTION__);
 		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
-                if (0) printk("%s: writing args at address %lx\n",
-                              __FUNCTION__,
-                              (long)(portal_data->fifo_base_phys));
+                //if (0) 
+		printk("%s: writing args at address %lx\n",
+		       __FUNCTION__, fifo_phys);
                 mutex_lock(&portal_data->reg_mutex);
                 for (i = 0; i < msg.size / 4; i++) {
-                  //printk("arg %x %08x\n", i*4, buf[i]);
-                        writel(buf[i],
-                               portal_data->fifo_base_virt + msg.channel * 256 + 128);
+                  printk("arg %x %08x\n", i*4, buf[i]);
+		  writel(buf[i], portal_data->req_fifo_base_virt + msg.channel * 256);
                 }
+		printk("finished write\n");
                 mutex_unlock(&portal_data->reg_mutex);
-                //dump_regs("PUT", portal_data);
+                // dump_ind_regs("PUT", portal_data);
                 return 0;
         } break;
 	case PORTAL_GET: {
                 PortalMessageWithPayload msg;
-                int int_status = readl(portal_data->reg_base_virt + 0x00);
-                int queue_status = readl(portal_data->reg_base_virt + 0x40);
+                int int_status = readl(portal_data->ind_reg_base_virt + 0x00);
+                int queue_status = readl(portal_data->ind_reg_base_virt + 0x20);
                 int mask = 0;
-                if (0)
+                //if (0)
                 printk("%s: GET int_status=%x mask=%x queue_status=%x\n",
                        __FUNCTION__, int_status, mask, queue_status);
                 if ((int_status & 1) == 0)
@@ -268,9 +263,9 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
 			return -EFAULT;
 
-                //dump_regs("GET", portal_data);
+                //dump_ind_regs("GET", portal_data);
                 mutex_lock(&portal_data->reg_mutex);
-                if (portal_data->fifo_base_virt) {
+                if (portal_data->ind_fifo_base_virt) {
                         int c;
                         for (c = 0; c < 32; c++) {
                                 int i;
@@ -278,16 +273,14 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                                         continue;
                                 if (0)
                                 printk("Reading FIFO %d size at %lx\n",
-                                       c, (long)portal_data->fifo_base_phys
+                                       c, (long)portal_data->ind_fifo_base_phys
                                        + c * 256);
                                 msg.pm.channel = c;
-                                msg.pm.size = readl(portal_data->fifo_base_virt
-                                                    + c * 256) * 4;
-                                //printk("msg.size=%d\n", msg.pm.size, count);
+                                printk("msg.size=%d\n", msg.pm.size);
                                 for (i = 0; i < msg.pm.size/4; i++) {
                                         msg.payload[i] = 
-                                                readl(portal_data->fifo_base_virt
-                                                      + c * 256 + 128);
+                                                readl(portal_data->ind_fifo_base_virt
+                                                      + c * 256);
                                         //printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
                                 }
                                 break;
@@ -333,17 +326,12 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
         return -ENODEV;
 }
 
-/* maps the region containing the fifos and registers */
 int portal_mmap(struct file *filep, struct vm_area_struct *vma)
 {
 	struct portal_client *portal_client = filep->private_data;
 	struct portal_data *portal_data = portal_client->portal_data;
-	unsigned long off = portal_data->reg_base_phys;
-
-	// no reason to ask for anything other than first, second, or both pages
+	unsigned long off = portal_data->ind_reg_base_phys;
 	unsigned long req_len = vma->vm_end - vma->vm_start + (vma->vm_pgoff << PAGE_SHIFT);
-        if (!(req_len == (1 << PAGE_SHIFT) || req_len == (2 << PAGE_SHIFT)))
-	        return -EINVAL;
 
         if (!portal_client)
                 return -ENODEV;
@@ -359,7 +347,7 @@ int portal_mmap(struct file *filep, struct vm_area_struct *vma)
 
         printk("%s req_len=%lx off=%lx\n", __FUNCTION__, req_len, off);
 	if(0)
-	  dump_regs(__FUNCTION__, portal_data);
+	  dump_ind_regs(__FUNCTION__, portal_data);
 
         return 0;
 }
@@ -369,12 +357,12 @@ unsigned int portal_poll (struct file *filep, poll_table *poll_table)
 {
 	struct portal_client *portal_client = filep->private_data;
 	struct portal_data *portal_data = portal_client->portal_data;
-        int int_status = readl(portal_data->reg_base_virt + 0);
+        int int_status = readl(portal_data->ind_reg_base_virt + 0);
         int mask = 0;
         poll_wait(filep, &portal_data->wait_queue, poll_table);
         if (int_status & 1)
                 mask = POLLIN | POLLRDNORM;
-        //printk("%s: int_status=%x mask=%x\n", __FUNCTION__, int_status, mask);
+        printk("%s: int_status=%x mask=%x\n", __FUNCTION__, int_status, mask);
         return mask;
 }
 
@@ -401,11 +389,7 @@ int portal_init_driver(struct portal_init_data *init_data)
 	struct portal_data *portal_data;
 	struct resource *reg_res, *irq_res;
         struct miscdevice *miscdev;
-	void *reg_base_virt, *fifo_base_virt;
-	u32 fifo_base_size[2];
-	u32 reg_base_phys, fifo_base_phys;
-	int reg_range, fifo_range;
-	int status = 0, rc = 0;
+	int rc = 0, dev_range=0, reg_range=0, fifo_range=0;
 	driver_devel("%s\n", __func__);
 	driver_devel("%s relies on a custom modification to arch/arm/mm/cache-v7.S:ENTRY(v7_coherent_user_range)", __func__);
 	dev = &init_data->pdev->dev;
@@ -427,34 +411,29 @@ int portal_init_driver(struct portal_init_data *init_data)
 		goto err_mem;
 	}
         portal_data->device_name = init_data->device_name;
-        memcpy(portal_data->timer_values, init_data->timer_values, sizeof(init_data->timer_values));
+        portal_data->dev_base_phys = reg_res->start;
+        portal_data->ind_reg_base_phys = reg_res->start + (3 << 14);
+	portal_data->ind_fifo_base_phys = reg_res->start + (2 << 14);
+        portal_data->req_reg_base_phys = reg_res->start + (1 << 14);
+	portal_data->req_fifo_base_phys = reg_res->start + (0 << 14);
+	
+	dev_range = reg_res->end - reg_res->start;
+	fifo_range = 1 << 14;
+	reg_range = 1 << 14;
 
-	reg_base_phys = reg_res->start;
-	reg_range = reg_res->end - reg_res->start;
-	reg_base_virt = ioremap_nocache(reg_base_phys, reg_range);
-        pr_info("%s reg_base phys %x/%x virt %p\n",
-                portal_data->device_name,
-                reg_base_phys, reg_range, reg_base_virt);
-        portal_data->reg_base_phys = reg_base_phys;
-        portal_data->reg_base_virt = reg_base_virt;
+	portal_data->dev_base_virt = ioremap_nocache(portal_data->dev_base_phys, dev_range);
+        portal_data->ind_reg_base_virt = ioremap_nocache(portal_data->ind_reg_base_phys, reg_range);
+        portal_data->ind_fifo_base_virt = ioremap_nocache(portal_data->ind_fifo_base_phys, fifo_range);
+        portal_data->req_reg_base_virt = ioremap_nocache(portal_data->req_reg_base_phys, reg_range);
+        portal_data->req_fifo_base_virt = ioremap_nocache(portal_data->req_fifo_base_phys, fifo_range);
 
-	status = of_property_read_u32_array(init_data->pdev->dev.of_node,
-					    "fifo", fifo_base_size, 2);
-        if (status) {
-		driver_devel("failed to get fifo address");
-		fifo_base_phys = reg_base_phys + 0x10000;
-		fifo_range = 0x10000;
-		fifo_base_virt = ioremap_nocache(fifo_base_phys, fifo_range);
-	} else {
-		fifo_base_phys = fifo_base_size[0];
-		fifo_range = fifo_base_size[1];
-		fifo_base_virt = ioremap_nocache(fifo_base_phys, fifo_range);
-	}
-        pr_info("%s fifo_base phys %x/%x virt %p\n",
+        pr_info("%s ind_reg_base phys %x/%x virt %p\n",
                 portal_data->device_name,
-                fifo_base_phys, fifo_range, fifo_base_virt);
-        portal_data->fifo_base_phys = fifo_base_phys;
-        portal_data->fifo_base_virt = fifo_base_virt;
+                portal_data->ind_reg_base_phys, reg_range, portal_data->ind_reg_base_virt);
+
+        pr_info("%s ind_fifo_base phys %x/%x virt %p\n",
+                portal_data->device_name,
+                portal_data->ind_fifo_base_phys, fifo_range, portal_data->ind_fifo_base_virt);
 
         mutex_init(&portal_data->reg_mutex);
         mutex_init(&portal_data->completion_mutex);
@@ -504,11 +483,6 @@ int portal_deinit_driver(struct platform_device *pdev)
 
 	driver_devel("%s\n", __func__);
 
-	if (portal_data->portal_use_ref) {
-		pr_err("Error portal in use\n");
-		return -EINVAL;
-	}
-
 	free_irq(portal_data->portal_irq, portal_data);
 	kfree(portal_data);
 
@@ -522,7 +496,6 @@ static int portal_parse_hw_info(struct device_node *np,
 {
 	u32 const *prop;
 	int size;
-        int status = 0;
 
 	prop = of_get_property(np, "device-name", &size);
 	if (!prop) {
@@ -531,11 +504,6 @@ static int portal_parse_hw_info(struct device_node *np,
 	}
         init_data->device_name = (char *)prop;
         driver_devel("%s: device-name=%s\n", DRIVER_NAME, init_data->device_name);
-
-	status = of_property_read_u32_array(np, "timer", init_data->timer_values,
-                                            sizeof(init_data->timer_values)/sizeof(u32));
-        if (!status)
-                driver_devel("%s: timer=%x %d\n", DRIVER_NAME, init_data->timer_values[0], init_data->timer_values[1]);
 	return 0;
 }
 
@@ -562,7 +530,6 @@ static int portal_of_remove(struct platform_device *pdev)
 {
 	return portal_deinit_driver(pdev);
 }
-
 
 static struct of_device_id portal_of_match[] __devinitdata = {
 	{ .compatible = "linux,ushw-bridge-0.01.a" }, /* old name */

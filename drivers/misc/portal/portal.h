@@ -51,28 +51,22 @@ struct portal_data {
         struct mutex completion_mutex;
         wait_queue_head_t wait_queue;
         const char *device_name;
-        dma_addr_t reg_base_phys;
-        dma_addr_t fifo_base_phys;
-        void      *reg_base_virt;
-        void      *fifo_base_virt;
-        size_t fifo_base_offset;
-	unsigned short portal_flags;
+        dma_addr_t dev_base_phys;
+        dma_addr_t ind_reg_base_phys;
+        dma_addr_t ind_fifo_base_phys;
+        dma_addr_t req_reg_base_phys;
+        dma_addr_t req_fifo_base_phys;
+        void      *dev_base_virt;
+        void      *ind_reg_base_virt;
+        void      *ind_fifo_base_virt;
+        void      *req_reg_base_virt;
+        void      *req_fifo_base_virt;
 	unsigned char portal_irq;
-	unsigned char portal_use_ref;
-        unsigned long int_status;
-
-        u32 timer_values[2];
-        u32 buf[128];
 };
 
 struct portal_init_data {
 	struct platform_device *pdev;
-	unsigned long vmem_base_addr;
-	unsigned long vmem_high_addr;
         const char *device_name;
-        u32 timer_values[2];
-	unsigned short flags;
-	bool vmode_params_set;
 };
 
 
