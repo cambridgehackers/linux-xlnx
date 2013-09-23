@@ -236,7 +236,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                 if (0) printk("%s: copying message body\n", __FUNCTION__);
 		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
 			return -EFAULT;
-                //if (0) 
+                if (0) 
 		printk("%s: writing args at address %lx\n",
 		       __FUNCTION__, fifo_phys);
                 mutex_lock(&portal_data->reg_mutex);
@@ -244,6 +244,7 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                   //printk("arg %x %08x\n", i*4, buf[i]);
 		  writel(buf[i], portal_data->req_fifo_base_virt + msg.channel * 256);
                 }
+		if(0)
 		printk("finished write\n");
                 mutex_unlock(&portal_data->reg_mutex);
                 // dump_ind_regs("PUT", portal_data);
@@ -281,7 +282,8 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                                         msg.payload[i] = 
                                                 readl(portal_data->ind_fifo_base_virt
                                                       + c * 256);
-                                        //printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
+                                        if (0)
+					printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
                                 }
                                 break;
                         }
@@ -362,6 +364,7 @@ unsigned int portal_poll (struct file *filep, poll_table *poll_table)
         poll_wait(filep, &portal_data->wait_queue, poll_table);
         if (int_status & 1)
                 mask = POLLIN | POLLRDNORM;
+	if(0)
         printk("%s: %s int_status=%x mask=%x\n", __FUNCTION__, portal_data->device_name, int_status, mask);
         return mask;
 }
