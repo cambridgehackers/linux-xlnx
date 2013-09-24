@@ -26,16 +26,6 @@ typedef struct PortalAlloc {
   int numEntries;
 } PortalAlloc;
 
-typedef struct PortalMessage {
-  size_t size;
-  size_t channel;
-} PortalMessage;
-
-typedef struct PortalMessageWithPayload {
-  PortalMessage pm;
-  int payload[128];
-} PortalMessageWithPayload;
-
 typedef struct PortalClockRequest {
   int clknum;
   long requested_rate;
@@ -43,11 +33,8 @@ typedef struct PortalClockRequest {
 } PortalClockRequest;
 
 #define PORTAL_ALLOC _IOWR('B', 10, PortalAlloc)
-#define PORTAL_DCACHE_FLUSH_INVAL _IOWR('B', 11, PortalMessage)
-#define PORTAL_PUT _IOWR('B', 18, PortalMessage)
-#define PORTAL_GET _IOWR('B', 19, PortalMessage)
+#define PORTAL_DCACHE_FLUSH_INVAL _IOWR('B', 11, PortalAlloc)
 #define PORTAL_SET_FCLK_RATE _IOWR('B', 40, PortalClockRequest)
-
 
 #endif
 

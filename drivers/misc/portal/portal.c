@@ -222,80 +222,6 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
                         return -EFAULT;
                 return 0;
         } break;
-	case PORTAL_PUT: {
-                PortalMessage msg;
-                unsigned int buf[128];
-                int i;
-                long fifo_phys;
-		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
-			return -EFAULT;
-                fifo_phys = (long)(portal_data->req_fifo_base_phys + msg.channel * 256);
-                //if (0)
-                printk("%s: PUT %s size=%d channel=%d fifoaddr=%lx\n", __FUNCTION__,
-                       portal_data->device_name, msg.size, msg.channel, fifo_phys);
-                if (0) printk("%s: copying message body\n", __FUNCTION__);
-		if (copy_from_user(&buf, (void __user *)arg+sizeof(msg), msg.size))
-			return -EFAULT;
-                if (0) 
-		printk("%s: writing args at address %lx\n",
-		       __FUNCTION__, fifo_phys);
-                mutex_lock(&portal_data->reg_mutex);
-                for (i = 0; i < msg.size / 4; i++) {
-                  //printk("arg %x %08x\n", i*4, buf[i]);
-		  writel(buf[i], portal_data->req_fifo_base_virt + msg.channel * 256);
-                }
-		if(0)
-		printk("finished write\n");
-                mutex_unlock(&portal_data->reg_mutex);
-                // dump_ind_regs("PUT", portal_data);
-                return 0;
-        } break;
-	case PORTAL_GET: {
-                PortalMessageWithPayload msg;
-                int int_status = readl(portal_data->ind_reg_base_virt + 0x00);
-                int queue_status = readl(portal_data->ind_reg_base_virt + 0x20);
-                int mask = 0;
-                //if (0)
-                printk("%s: GET %s int_status=%x mask=%x queue_status=%x\n",
-                       __FUNCTION__, portal_data->device_name, int_status, mask, queue_status);
-                if ((int_status & 1) == 0)
-                        return -EAGAIN;
-                // we need to know how big the buffer is
-		if (copy_from_user(&msg, (void __user *)arg, sizeof(msg)))
-			return -EFAULT;
-
-                //dump_ind_regs("GET", portal_data);
-                mutex_lock(&portal_data->reg_mutex);
-                if (portal_data->ind_fifo_base_virt) {
-                        int c;
-                        for (c = 0; c < 32; c++) {
-                                int i;
-                                if ((queue_status & (1 << c)) == 0)
-                                        continue;
-                                if (0)
-                                printk("Reading FIFO %d size at %lx\n",
-                                       c, (long)portal_data->ind_fifo_base_phys
-                                       + c * 256);
-                                msg.pm.channel = c;
-                                printk("msg.size=%d\n", msg.pm.size);
-                                for (i = 0; i < msg.pm.size/4; i++) {
-                                        msg.payload[i] = 
-                                                readl(portal_data->ind_fifo_base_virt
-                                                      + c * 256);
-                                        if (0)
-					printk("%s: result %x %08x\n", __FUNCTION__, i*4, msg.payload[i]);
-                                }
-                                break;
-                        }
-                }
-                mutex_unlock(&portal_data->reg_mutex);
-
-                if (copy_to_user((void __user *)arg,
-                                 &msg,
-                                 sizeof(PortalMessage) + msg.pm.size))
-                        return -EFAULT;
-                return 0;
-        } break;
 	case PORTAL_SET_FCLK_RATE: {
 		PortalClockRequest request;
 		char clkname[8];
@@ -332,7 +258,7 @@ int portal_mmap(struct file *filep, struct vm_area_struct *vma)
 {
 	struct portal_client *portal_client = filep->private_data;
 	struct portal_data *portal_data = portal_client->portal_data;
-	unsigned long off = portal_data->ind_reg_base_phys;
+	unsigned long off = portal_data->dev_base_phys;
 	unsigned long req_len = vma->vm_end - vma->vm_start + (vma->vm_pgoff << PAGE_SHIFT);
 
         if (!portal_client)
