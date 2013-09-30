@@ -35,10 +35,40 @@
 #include <linux/dma-buf.h>
 #include <linux/portal.h>
 
+#include <linux/vmalloc.h>
 #include <linux/slab.h>
 #include <linux/scatterlist.h>
-#include <asm/cacheflush.h>
 
+/////////////////////////////////////////////////////////////
+// copied from ion_priv.h
+
+
+/**
+ * heap flags - the lower 16 bits are used by core ion, the upper 16
+ * bits are reserved for use by the heaps themselves.
+ */
+#define ION_FLAG_CACHED 1		/* mappings of this buffer should be
+					   cached, ion will do cache
+					   maintenance when the buffer is
+					   mapped for dma */
+#define ION_FLAG_CACHED_NEEDS_SYNC 2	/* mappings of this buffer will created
+					   at mmap time, if this is set
+					   caches must be managed manually */
+
+struct ion_device;
+struct ion_heap;
+struct ion_mapper;
+struct ion_client;
+struct ion_buffer;
+
+/* This should be removed some day when phys_addr_t's are fully
+   plumbed in the kernel, and all instances of ion_phys_addr_t should
+   be converted to phys_addr_t.  For the time being many kernel interfaces
+   do not accept phys_addr_t's that would have to */
+#define ion_phys_addr_t unsigned long
+
+// 
+/////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////
 // copied from ion.c
@@ -94,39 +124,35 @@ struct ion_buffer {
 	pid_t pid;
 };
 
-/**
- * struct ion_heap_ops - ops to operate on a given heap
- * @allocate:		allocate memory
- * @free:		free memory
- * @phys		get physical address of a buffer (only define on
- *			physically contiguous heaps)
- * @map_dma		map the memory for dma to a scatterlist
- * @unmap_dma		unmap the memory for dma
- * @map_kernel		map memory to the kernel
- * @unmap_kernel	unmap memory to the kernel
- * @map_user		map memory to userspace
- */
-struct ion_heap_ops {
-	int (*allocate) (struct ion_heap *heap,
-			 struct ion_buffer *buffer, unsigned long len,
-			 unsigned long align, unsigned long flags);
-	void (*free) (struct ion_buffer *buffer);
-	int (*phys) (struct ion_heap *heap, struct ion_buffer *buffer,
-		     ion_phys_addr_t *addr, size_t *len);
-	struct sg_table *(*map_dma) (struct ion_heap *heap,
+static int ion_system_contig_heap_map_user(struct ion_heap *heap,
+					   struct ion_buffer *buffer,
+					   struct vm_area_struct *vma);
+
+static int ion_system_contig_heap_allocate(struct ion_heap *heap,
+					   struct ion_buffer *buffer,
+					   unsigned long len,
+					   unsigned long align,
+					   unsigned long flags);
+
+static struct sg_table *ion_system_contig_heap_map_dma(struct ion_heap *heap,
+						       struct ion_buffer *buffer);
+
+static void ion_system_contig_heap_free(struct ion_buffer *buffer);
+
+static void ion_system_heap_unmap_kernel(struct ion_heap *heap,
+					 struct ion_buffer *buffer);
+
+
+static void ion_system_contig_heap_unmap_dma(struct ion_heap *heap,
+					     struct ion_buffer *buffer);
+
+static void *ion_system_heap_map_kernel(struct ion_heap *heap,
 					struct ion_buffer *buffer);
-	void (*unmap_dma) (struct ion_heap *heap, struct ion_buffer *buffer);
-	void * (*map_kernel) (struct ion_heap *heap, struct ion_buffer *buffer);
-	void (*unmap_kernel) (struct ion_heap *heap, struct ion_buffer *buffer);
-	int (*map_user) (struct ion_heap *mapper, struct ion_buffer *buffer,
-			 struct vm_area_struct *vma);
-};
 
 /**
  * struct ion_heap - represents a heap in the system
  * @node:		rb node to put the heap on the device's tree of heaps
  * @dev:		back pointer to the ion_device
- * @type:		type of heap
  * @ops:		ops struct as above
  * @id:			id of heap, also indicates priority of this heap when
  *			allocating.  These are specified by platform data and
@@ -143,49 +169,10 @@ struct ion_heap_ops {
 struct ion_heap {
 	struct rb_node node;
 	struct ion_device *dev;
-	enum ion_heap_type type;
-	struct ion_heap_ops *ops;
 	int id;
 	const char *name;
 };
 
-/**
- * functions for creating and destroying the built in ion heaps.
- * architectures can add their own custom architecture specific
- * heaps as appropriate.
- */
-
-struct ion_heap *ion_heap_create(struct ion_platform_heap *);
-void ion_heap_destroy(struct ion_heap *);
-
-struct ion_heap *ion_system_heap_create(struct ion_platform_heap *);
-void ion_system_heap_destroy(struct ion_heap *);
-
-struct ion_heap *ion_system_contig_heap_create(struct ion_platform_heap *);
-void ion_system_contig_heap_destroy(struct ion_heap *);
-
-struct ion_heap *ion_carveout_heap_create(struct ion_platform_heap *);
-void ion_carveout_heap_destroy(struct ion_heap *);
-/**
- * kernel api to allocate/free from carveout -- used when carveout is
- * used to back an architecture specific custom heap
- */
-ion_phys_addr_t ion_carveout_allocate(struct ion_heap *heap, unsigned long size,
-				      unsigned long align);
-void ion_carveout_free(struct ion_heap *heap, ion_phys_addr_t addr,
-		       unsigned long size);
-/**
- * The carveout heap returns physical addresses, since 0 may be a valid
- * physical address, this is used to indicate allocation failed
- */
-#define ION_CARVEOUT_ALLOCATE_FAIL -1
-
-/**
- * functions for creating and destroying a heap pool -- allows you
- * to keep a pool of pre allocated memory to use from your heap.  Keeping
- * a pool of memory that is ready for dma, ie any cached mapping have been
- * invalidated from the cache, provides a significant peformance benefit on
- * many systems */
 
 /**
  * struct ion_page_pool - pagepool struct
@@ -349,7 +336,7 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 	buffer->flags = flags;
 	kref_init(&buffer->ref);
 
-	ret = heap->ops->allocate(heap, buffer, len, align, flags);
+	ret = ion_system_contig_heap_allocate(heap, buffer, len, align, flags);
 	if (ret) {
 		kfree(buffer);
 		return ERR_PTR(ret);
@@ -358,9 +345,9 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 	buffer->dev = dev;
 	buffer->size = len;
 
-	table = heap->ops->map_dma(heap, buffer);
+	table = ion_system_contig_heap_map_dma(heap, buffer);
 	if (IS_ERR_OR_NULL(table)) {
-		heap->ops->free(buffer);
+		ion_system_contig_heap_free(buffer);
 		kfree(buffer);
 		return ERR_PTR(PTR_ERR(table));
 	}
@@ -401,8 +388,8 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 	return buffer;
 
 err:
-	heap->ops->unmap_dma(heap, buffer);
-	heap->ops->free(buffer);
+	ion_system_contig_heap_unmap_dma(heap, buffer);
+	ion_system_contig_heap_free(buffer);
 	kfree(buffer);
 	return ERR_PTR(ret);
 }
@@ -413,9 +400,9 @@ static void ion_buffer_destroy(struct kref *kref)
 	struct ion_device *dev = buffer->dev;
 
 	if (WARN_ON(buffer->kmap_cnt > 0))
-		buffer->heap->ops->unmap_kernel(buffer->heap, buffer);
-	buffer->heap->ops->unmap_dma(buffer->heap, buffer);
-	buffer->heap->ops->free(buffer);
+		ion_system_heap_unmap_kernel(buffer->heap, buffer);
+	ion_system_contig_heap_unmap_dma(buffer->heap, buffer);
+	ion_system_contig_heap_free(buffer);
 	mutex_lock(&dev->buffer_lock);
 	rb_erase(&buffer->node, &dev->buffers);
 	mutex_unlock(&dev->buffer_lock);
@@ -571,11 +558,12 @@ static struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 	for (n = rb_first(&dev->heaps); n != NULL; n = rb_next(n)) {
 		struct ion_heap *heap = rb_entry(n, struct ion_heap, node);
 		/* if the client doesn't support this heap type */
-		if (!((1 << heap->type) & client->heap_mask))
-			continue;
+		//if (!((1 << heap->type) & client->heap_mask))
+		//	continue;
 		/* if the caller didn't specify this heap type */
 		if (!((1 << heap->id) & heap_mask))
 			continue;
+
 		buffer = ion_buffer_create(heap, dev, len, align, flags);
 		if (!IS_ERR_OR_NULL(buffer))
 			break;
@@ -616,7 +604,7 @@ static void *ion_buffer_kmap_get(struct ion_buffer *buffer)
 		buffer->kmap_cnt++;
 		return buffer->vaddr;
 	}
-	vaddr = buffer->heap->ops->map_kernel(buffer->heap, buffer);
+	vaddr = ion_system_heap_map_kernel(buffer->heap, buffer);
 	if (IS_ERR_OR_NULL(vaddr))
 		return vaddr;
 	buffer->vaddr = vaddr;
@@ -629,7 +617,7 @@ static void ion_buffer_kmap_put(struct ion_buffer *buffer)
 {
 	buffer->kmap_cnt--;
 	if (!buffer->kmap_cnt) {
-		buffer->heap->ops->unmap_kernel(buffer->heap, buffer);
+		ion_system_heap_unmap_kernel(buffer->heap, buffer);
 		buffer->vaddr = NULL;
 	}
 }
@@ -857,12 +845,6 @@ static int ion_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	struct ion_buffer *buffer = dmabuf->priv;
 	int ret = 0;
 
-	if (!buffer->heap->ops->map_user) {
-		pr_err("%s: this heap does not define a method for mapping "
-		       "to userspace\n", __func__);
-		return -EINVAL;
-	}
-
 	if (ion_buffer_fault_user_mappings(buffer)) {
 		vma->vm_private_data = buffer;
 		vma->vm_ops = &ion_vma_ops;
@@ -875,7 +857,7 @@ static int ion_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 
 	mutex_lock(&buffer->lock);
 	/* now map it to userspace */
-	ret = buffer->heap->ops->map_user(buffer->heap, buffer, vma);
+	ret = ion_system_contig_heap_map_user(buffer->heap, buffer, vma);
 	mutex_unlock(&buffer->lock);
 
 	if (ret)
@@ -910,11 +892,6 @@ static int ion_dma_buf_begin_cpu_access(struct dma_buf *dmabuf, size_t start,
 	struct ion_buffer *buffer = dmabuf->priv;
 	void *vaddr;
 
-	if (!buffer->heap->ops->map_kernel) {
-		pr_err("%s: map kernel is not implemented by this heap.\n",
-		       __func__);
-		return -ENODEV;
-	}
 
 	mutex_lock(&buffer->lock);
 	vaddr = ion_buffer_kmap_get(buffer);
@@ -1017,11 +994,6 @@ static void ion_device_add_heap(struct ion_device *dev, struct ion_heap *heap)
 	struct rb_node *parent = NULL;
 	struct ion_heap *entry;
 
-	if (!heap->ops->allocate || !heap->ops->free || !heap->ops->map_dma ||
-	    !heap->ops->unmap_dma)
-		pr_err("%s: can not add heap with invalid ops struct.\n",
-		       __func__);
-
 	heap->dev = dev;
 	down_write(&dev->lock);
 	while (*p) {
@@ -1085,50 +1057,155 @@ static void ion_device_destroy(struct ion_device *dev)
 //
 /////////////////////////////////////////////////////////////
 
+/////////////////////////////////////////////////////////////
+// copied from ion_system_heap.c
+
+static int ion_system_contig_heap_allocate(struct ion_heap *heap,
+					   struct ion_buffer *buffer,
+					   unsigned long len,
+					   unsigned long align,
+					   unsigned long flags)
+{
+	buffer->priv_virt = kzalloc(len, GFP_KERNEL);
+	if (!buffer->priv_virt)
+		return -ENOMEM;
+	return 0;
+}
+
+static void ion_system_contig_heap_free(struct ion_buffer *buffer)
+{
+	kfree(buffer->priv_virt);
+}
+
+static int ion_system_contig_heap_phys(struct ion_heap *heap,
+				       struct ion_buffer *buffer,
+				       ion_phys_addr_t *addr, size_t *len)
+{
+	*addr = virt_to_phys(buffer->priv_virt);
+	*len = buffer->size;
+	return 0;
+}
+
+static struct sg_table *ion_system_contig_heap_map_dma(struct ion_heap *heap,
+						struct ion_buffer *buffer)
+{
+	struct sg_table *table;
+	int ret;
+
+	table = kzalloc(sizeof(struct sg_table), GFP_KERNEL);
+	if (!table)
+		return ERR_PTR(-ENOMEM);
+	ret = sg_alloc_table(table, 1, GFP_KERNEL);
+	if (ret) {
+		kfree(table);
+		return ERR_PTR(ret);
+	}
+	sg_set_page(table->sgl, virt_to_page(buffer->priv_virt), buffer->size,
+		    0);
+	return table;
+}
+
+static void ion_system_contig_heap_unmap_dma(struct ion_heap *heap,
+				      struct ion_buffer *buffer)
+{
+	sg_free_table(buffer->sg_table);
+	kfree(buffer->sg_table);
+}
+
+static int ion_system_contig_heap_map_user(struct ion_heap *heap,
+				    struct ion_buffer *buffer,
+				    struct vm_area_struct *vma)
+{
+	unsigned long pfn = __phys_to_pfn(virt_to_phys(buffer->priv_virt));
+	return remap_pfn_range(vma, vma->vm_start, pfn + vma->vm_pgoff,
+			       vma->vm_end - vma->vm_start,
+			       vma->vm_page_prot);
+
+}
+
+static void *ion_system_heap_map_kernel(struct ion_heap *heap,
+				 struct ion_buffer *buffer)
+{
+	struct scatterlist *sg;
+	int i, j;
+	void *vaddr;
+	pgprot_t pgprot;
+	struct sg_table *table = buffer->priv_virt;
+	int npages = PAGE_ALIGN(buffer->size) / PAGE_SIZE;
+	struct page **pages = vmalloc(sizeof(struct page *) * npages);
+	struct page **tmp = pages;
+
+	if (!pages)
+		return 0;
+
+	if (buffer->flags & ION_FLAG_CACHED)
+		pgprot = PAGE_KERNEL;
+	else
+		pgprot = pgprot_writecombine(PAGE_KERNEL);
+
+	for_each_sg(table->sgl, sg, table->nents, i) {
+		int npages_this_entry = PAGE_ALIGN(sg_dma_len(sg)) / PAGE_SIZE;
+		struct page *page = sg_page(sg);
+		BUG_ON(i >= npages);
+		for (j = 0; j < npages_this_entry; j++) {
+			*(tmp++) = page++;
+		}
+	}
+	vaddr = vmap(pages, npages, VM_MAP, pgprot);
+	vfree(pages);
+
+	return vaddr;
+}
+
+static void ion_system_heap_unmap_kernel(struct ion_heap *heap,
+				  struct ion_buffer *buffer)
+{
+	vunmap(buffer->vaddr);
+}
+
+static struct ion_heap *ion_system_contig_heap_create(void)
+{
+	struct ion_heap *heap;
+
+	heap = kzalloc(sizeof(struct ion_heap), GFP_KERNEL);
+	if (!heap)
+		return ERR_PTR(-ENOMEM);
+	return heap;
+}
+
+static void ion_system_contig_heap_destroy(struct ion_heap *heap)
+{
+	kfree(heap);
+}
+
+//
+/////////////////////////////////////////////////////////////
+
 
 struct ion_device *portal_ion_device;
-struct ion_heap *portal_ion_heap[2]; 
+struct ion_heap *portal_ion_heap; 
 
 void portal_init_ion(void)
 {
-        struct ion_platform_heap heap_data;
-        int i;
-        heap_data.type = ION_HEAP_TYPE_SYSTEM_CONTIG;
-        // fixme use devicetree
-        heap_data.base = 0x18000000; // not used for system_contig or system
-        heap_data.size = 0x08000000; // not used for system_contig or system
-
         if (portal_ion_device == NULL) {
                 printk("creating ion_device for portal\n");
                 portal_ion_device = ion_device_create(NULL);
                 printk("ion_device %p\n", portal_ion_device);
-                for (i = 0; i < 2; i++) {
-                        char name[22];
-                        snprintf(name, sizeof(name), "portal-ion-heap-%d", i);
-
-                        heap_data.id = i;
-                        heap_data.name = name;
-                        printk("creating ion_heap for portal\n");
-                        portal_ion_heap[i] = ion_heap_create(&heap_data);
-                        printk("ion_heap %p\n", portal_ion_heap);
-                        ion_device_add_heap(portal_ion_device, portal_ion_heap[i]);
-
-                        // next one is system
-                        heap_data.type = ION_HEAP_TYPE_SYSTEM;
-                }
+		printk("creating ion_heap for portal\n");
+		portal_ion_heap = ion_system_contig_heap_create();
+		portal_ion_heap->name = "portal-ion-heap";
+		portal_ion_heap->id = 0;
+		printk("ion_heap %p\n", portal_ion_heap);
+		ion_device_add_heap(portal_ion_device, portal_ion_heap);
         }
 }
 
 void portal_ion_release(void)
 {
-        int i;
-
         ion_device_destroy(portal_ion_device);
         portal_ion_device = NULL;
-        for (i = 0; i < 2; i++) {
-                ion_heap_destroy(portal_ion_heap[i]);
-                portal_ion_heap[i] = NULL;
-        }
+	ion_system_contig_heap_destroy(portal_ion_heap);
+	portal_ion_heap = NULL;
 }
 
 static void dump_ind_regs(const char *prefix, struct portal_data *portal_data)
@@ -1199,7 +1276,6 @@ static int portal_open(struct inode *inode, struct file *filep)
 long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
 	struct portal_client *portal_client = filep->private_data;
-	struct portal_data *portal_data = portal_client->portal_data;
         switch (cmd) {
 	case PORTAL_DCACHE_FLUSH_INVAL: {
 	  struct PortalAlloc alloc;
@@ -1358,8 +1434,6 @@ int portal_init_driver(struct portal_init_data *init_data)
 	struct resource *reg_res, *irq_res;
         struct miscdevice *miscdev;
 	int rc = 0, dev_range=0, reg_range=0, fifo_range=0;
-	driver_devel("%s\n", __func__);
-	driver_devel("%s relies on a custom modification to arch/arm/mm/cache-v7.S:ENTRY(v7_coherent_user_range)", __func__);
 	dev = &init_data->pdev->dev;
 
         if (!portal_ion_device)
