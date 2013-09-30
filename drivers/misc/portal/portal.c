@@ -104,9 +104,6 @@ struct ion_handle {
 	unsigned int kmap_cnt;
 };
 
-
-#define ion_phys_addr_t unsigned long
-
 // 
 /////////////////////////////////////////////////////////////
 
@@ -123,8 +120,6 @@ struct ion_device *portal_ion_device;
  * @size:		size of the buffer
  * @priv_virt:		private data to the buffer representable as
  *			a void *
- * @priv_phys:		private data to the buffer representable as
- *			an ion_phys_addr_t (and someday a phys_addr_t)
  * @lock:		protects the buffers cnt fields
  * @kmap_cnt:		number of times the buffer is mapped to the kernel
  * @vaddr:		the kenrel mapping if kmap_cnt is not zero
@@ -144,10 +139,7 @@ struct ion_buffer {
 	struct rb_node node;
 	struct ion_device *dev;
 	size_t size;
-	union {
-		void *priv_virt;
-		ion_phys_addr_t priv_phys;
-	};
+        void *priv_virt;
 	struct mutex lock;
 	int kmap_cnt;
 	void *vaddr;
