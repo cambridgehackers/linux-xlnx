@@ -530,7 +530,7 @@ config SRAM
 	  areas found on many SoCs.
 
 config PORTAL
-	bool "Generic hardware portal driver"
+	tristate "Generic hardware portal driver"
         default n
         select OF
         help

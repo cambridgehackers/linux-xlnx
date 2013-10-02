@@ -12,32 +12,23 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
-#include <linux/dma-mapping.h>
-#include <linux/delay.h>
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/of.h>
 #include <linux/poll.h>
 #include <linux/uaccess.h>
-#include <linux/console.h>
 #include <linux/miscdevice.h>
 #include <linux/platform_device.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
-#include "portal.h"
-#include <linux/portal.h>
 #include <linux/clk.h>
-#include <linux/seq_file.h>
-#include <linux/memblock.h>
-
-#include <linux/types.h>
 #include <linux/ioctl.h>
 #include <linux/dma-buf.h>
-#include <linux/portal.h>
-
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
 #include <linux/scatterlist.h>
+#include <linux/portal.h>
+
+#include "portal.h"
 
 /////////////////////////////////////////////////////////////
 // copied from ion_priv.h
@@ -711,7 +702,7 @@ static const struct file_operations ion_fops = {
 };
 
 
-static struct ion_device *ion_device_create()
+static struct ion_device *ion_device_create(void)
 {
 	struct ion_device *idev;
 	int ret;
@@ -925,12 +916,9 @@ long portal_unlocked_ioctl(struct file *filep, unsigned int cmd, unsigned long a
 	  int i;
 	  if (copy_from_user(&alloc, (void __user *)arg, sizeof(alloc)))
 	    return -EFAULT;
-	  //printk("portal_dcache_flush_inval\n");
 	  for(i = 0; i < alloc.numEntries; i++){
 	    unsigned int start_addr = alloc.entries[i].dma_address;
 	    unsigned int end_addr = start_addr + alloc.entries[i].length;
-	    // printk("portal_dcache_flush_inval[%d] %08x %d\n", i, start_addr, end_addr);
-	    // we saw this funciton invoked in arch/arm/mm/dma-mapping.c it works on physical addresses.
 	    outer_clean_range(start_addr, end_addr);
 	    outer_inv_range(start_addr, end_addr);
 	  }
@@ -1212,7 +1200,10 @@ static int portal_of_probe(struct platform_device *pdev)
 
 static int portal_of_remove(struct platform_device *pdev)
 {
-	return portal_deinit_driver(pdev);
+  struct device *dev = &pdev->dev;
+  struct portal_data *portal_data =  (struct portal_data *)dev_get_drvdata(dev);
+  misc_deregister(&portal_data->misc);
+  return portal_deinit_driver(pdev);
 }
 
 static struct of_device_id portal_of_match[] __devinitdata = {
