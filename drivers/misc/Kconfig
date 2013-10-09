@@ -533,6 +533,7 @@ config PORTAL
 	tristate "Generic hardware portal driver"
         default n
         select OF
+        select DMA_SHARED_BUFFER
         help
           Generic userspace hardware portal
 
