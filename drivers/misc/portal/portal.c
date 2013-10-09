@@ -305,7 +305,7 @@ static struct ion_handle *ion_handle_create(struct ion_client *client,
 	if (!handle)
 		return ERR_PTR(-ENOMEM);
 	kref_init(&handle->ref);
-	rb_init_node(&handle->node);
+	//jca rb_init_node(&handle->node);
 	handle->client = client;
 	ion_buffer_get(buffer);
 	ion_buffer_add_to_handle(buffer);
@@ -1014,7 +1014,7 @@ int portal_mmap(struct file *filep, struct vm_area_struct *vma)
 
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	vma->vm_pgoff = off >> PAGE_SHIFT;
-	vma->vm_flags |= VM_IO | VM_RESERVED;
+	vma->vm_flags |= VM_IO /*jca | VM_RESERVED */;
         if (io_remap_pfn_range(vma, vma->vm_start, off >> PAGE_SHIFT,
                                vma->vm_end - vma->vm_start, vma->vm_page_prot))
                 return -EAGAIN;
@@ -1206,7 +1206,7 @@ static int portal_of_remove(struct platform_device *pdev)
   return portal_deinit_driver(pdev);
 }
 
-static struct of_device_id portal_of_match[] __devinitdata = {
+static struct of_device_id portal_of_match[] /*jca __devinitdata */ = {
 	{ .compatible = "linux,ushw-bridge-0.01.a" }, /* old name */
 	{ .compatible = "linux,portal-0.01.a" },
 	{/* end of table */},
