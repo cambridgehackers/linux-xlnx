@@ -2821,6 +2821,8 @@ static int xemacps_probe(struct platform_device *pdev)
 	struct net_local *lp;
 	u32 regval = 0;
 	int rc = -ENXIO;
+	int macsize;
+	const void *macaddr;
 
 	r_mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	r_irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
@@ -2903,6 +2905,15 @@ static int xemacps_probe(struct platform_device *pdev)
 
 	rc = of_property_read_u32(lp->pdev->dev.of_node, "xlnx,has-mdio",
 							&lp->has_mdio);
+#if 0
+        macaddr = of_get_property(lp->pdev->dev.of_node, "local-mac-address", &macsize);
+        if (macaddr && macsize == 6) {
+                struct sockaddr hwaddr;
+                 hwaddr.sa_family = 0;
+                memcpy(hwaddr.sa_data, macaddr, macsize);
+                xemacps_set_mac_address(ndev, (void *) &hwaddr);
+        }
+#endif
 	lp->phy_node = of_parse_phandle(lp->pdev->dev.of_node,
 						"phy-handle", 0);
 	lp->gmii2rgmii_phy_node = of_parse_phandle(lp->pdev->dev.of_node,
