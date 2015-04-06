@@ -906,6 +906,7 @@ void __init load_default_modules(void)
 
 static int run_init_process(const char *init_filename)
 {
+printk("[%s:%d] '%s'\n", __FUNCTION__, __LINE__, init_filename);
 	argv_init[0] = init_filename;
 	return do_execve(getname_kernel(init_filename),
 		(const char __user *const __user *)argv_init,
