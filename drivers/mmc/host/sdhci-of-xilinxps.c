@@ -228,6 +228,7 @@ err_free:
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(sdhci_zynq_probe);
 
 static int sdhci_zynq_remove(struct platform_device *pdev)
 {
@@ -245,6 +246,7 @@ static int sdhci_zynq_remove(struct platform_device *pdev)
 
 	return sdhci_pltfm_unregister(pdev);
 }
+EXPORT_SYMBOL_GPL(sdhci_zynq_remove);
 
 static const struct of_device_id sdhci_zynq_of_match[] = {
 	{ .compatible = "xlnx,ps7-sdhci-1.00.a" },
@@ -263,6 +265,7 @@ static struct platform_driver sdhci_zynq_driver = {
 	.probe = sdhci_zynq_probe,
 	.remove = sdhci_zynq_remove,
 };
+
 
 module_platform_driver(sdhci_zynq_driver);
 
