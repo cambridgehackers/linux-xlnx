@@ -1040,7 +1040,6 @@ struct dentry *mount_nodev(struct file_system_type *fs_type,
 	int error;
 	struct super_block *s = sget(fs_type, NULL, set_anon_super, flags, NULL);
 
-printk("[%s:%d]mount_nodev\n", __FUNCTION__, __LINE__);
 	if (IS_ERR(s))
 		return ERR_CAST(s);
 
@@ -1091,7 +1090,6 @@ mount_fs(struct file_system_type *type, int flags, const char *name, void *data)
 	char *secdata = NULL;
 	int error = -ENOMEM;
 
-printk("[%s:%d]mountfs '%s' flags %x\n", __FUNCTION__, __LINE__, name, flags);
 	if (data && !(type->fs_flags & FS_BINARY_MOUNTDATA)) {
 		secdata = alloc_secdata();
 		if (!secdata)

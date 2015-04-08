@@ -598,17 +598,10 @@ static struct dentry *rootfs_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
 {
 	static unsigned long once;
-printk("[%s:%d] once %d\n", __FUNCTION__, __LINE__, once);
 	void *fill = ramfs_fill_super;
 
-#if 0
 	if (test_and_set_bit(0, &once))
 		return ERR_PTR(-ENODEV);
-#else
-	if (once)
-		return ERR_PTR(-ENODEV);
-once = 1;
-#endif
 
 	if (IS_ENABLED(CONFIG_TMPFS) && is_tmpfs)
 		fill = shmem_fill_super;
