@@ -20,6 +20,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/of.h>
 #include "sdhci-pltfm.h"
 
 #define SDHCI_ARASAN_CLK_CTRL_OFFSET	0x2c
@@ -132,6 +133,7 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 	struct sdhci_host *host;
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_arasan_data *sdhci_arasan;
+	uint32_t freqval = 0;
 
 	sdhci_arasan = devm_kzalloc(&pdev->dev, sizeof(*sdhci_arasan),
 			GFP_KERNEL);
@@ -150,16 +152,19 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
 		return PTR_ERR(clk_xin);
 	}
 
-printk("[%s:%d] clk_ahb %lx freq %ld\n", __FUNCTION__, __LINE__, (long)sdhci_arasan->clk_ahb, clk_get_rate(sdhci_arasan->clk_ahb));
 	ret = clk_prepare_enable(sdhci_arasan->clk_ahb);
 	if (ret) {
 		dev_err(&pdev->dev, "Unable to enable AHB clock.\n");
 		return ret;
 	}
 
-printk("[%s:%d] clk_xin %lx freq %ld\n", __FUNCTION__, __LINE__, (long)clk_xin, clk_get_rate(clk_xin));
-clk_set_rate(clk_xin, 10000000);
-printk("[%s:%d] after clk_xin %lx freq %ld\n", __FUNCTION__, __LINE__, (long)clk_xin, clk_get_rate(clk_xin));
+	ret = of_property_read_u32_index(pdev->dev.of_node, "clock-frequency", 0, &freqval);
+	if (!ret) {
+		printk("[%s:%d] freq %x=%d.\n", __FUNCTION__, __LINE__, freqval, freqval);
+		clk_set_rate(clk_xin, freqval);
+		printk("[%s:%d] after c %lx freq %ld\n", __FUNCTION__, __LINE__, (long)clk_xin, clk_get_rate(clk_xin));
+	}
+
 	ret = clk_prepare_enable(clk_xin);
 	if (ret) {
 		dev_err(&pdev->dev, "Unable to enable SD clock.\n");
