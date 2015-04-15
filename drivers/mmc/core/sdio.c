@@ -787,8 +787,10 @@ try_again:
 		 * Switch to high-speed (if supported).
 		 */
 		err = sdio_enable_hs(card);
-		if (err > 0)
-			mmc_sd_go_highspeed(card);
+		if (err > 0) { 
+		  if (!(card->quirks & MMC_QUIRK_HIGHSPEED_DISABLED))
+		    mmc_sd_go_highspeed(card);
+		}
 		else if (err)
 			goto remove;
 

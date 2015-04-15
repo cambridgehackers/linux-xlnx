@@ -41,7 +41,6 @@ struct xsdhcips {
 static unsigned int zynq_of_get_max_clock(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-
 	return pltfm_host->clock;
 }
 
@@ -99,6 +98,7 @@ static int xsdhcips_suspend(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xsdhcips_suspend);
 
 /**
  * xsdhcips_resume - Resume method for the driver
@@ -130,6 +130,7 @@ static int xsdhcips_resume(struct device *dev)
 
 	return sdhci_resume_host(host);
 }
+EXPORT_SYMBOL_GPL(xsdhcips_resume);
 
 static const struct dev_pm_ops xsdhcips_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(xsdhcips_suspend, xsdhcips_resume)
@@ -142,13 +143,14 @@ static const struct dev_pm_ops xsdhcips_dev_pm_ops = {
 
 static int sdhci_zynq_probe(struct platform_device *pdev)
 {
-	int ret;
+        int ret, cr;
 	int irq = platform_get_irq(pdev, 0);
 	const void *prop;
 	struct device_node *np = pdev->dev.of_node;
 	struct sdhci_host *host;
 	struct sdhci_pltfm_host *pltfm_host;
 	struct xsdhcips *xsdhcips;
+	u32 freqval = 0;
 
 	xsdhcips = kmalloc(sizeof(*xsdhcips), GFP_KERNEL);
 	if (!xsdhcips) {
@@ -171,6 +173,22 @@ static int sdhci_zynq_probe(struct platform_device *pdev)
 		xsdhcips->devclk = clk_get_sys("SDIO0", NULL);
 	else
 		xsdhcips->devclk = clk_get_sys("SDIO1", NULL);
+
+	/* prop = of_get_property(np, "clock-frequency", NULL); */
+        /* if (prop) { */
+	/*   freqval = (u32) be32_to_cpup(prop); */
+	/*   clk_set_rate(xsdhcips->devclk, clk_round_rate(xsdhcips->devclk, freqval)); */
+	/*   printk("XXXXXXX [%s:%d] after c freq %ld\n", __FUNCTION__, __LINE__, clk_get_rate(xsdhcips->devclk)); */
+        /* } */
+
+	cr = clk_get_rate(xsdhcips->devclk);
+	if (cr >= 49999999){
+	  freqval = clk_round_rate(xsdhcips->devclk, cr/3);
+	  clk_set_rate(xsdhcips->devclk, freqval);
+	  printk("MDK HACK (clock speed) XXXXX %s:%d:%s (%d,%d)\n",  __FUNCTION__,__LINE__, __FILE__, 
+		 cr, (u32)clk_get_rate(xsdhcips->devclk));
+	}
+
 
 	if (IS_ERR(xsdhcips->devclk)) {
 		dev_err(&pdev->dev, "Device clock not found.\n");
@@ -204,12 +222,20 @@ static int sdhci_zynq_probe(struct platform_device *pdev)
 	}
 
 	host = platform_get_drvdata(pdev);
+
 	pltfm_host = sdhci_priv(host);
 	pltfm_host->priv = xsdhcips;
 
 	prop = of_get_property(np, "xlnx,has-cd", NULL);
 	if (prop == NULL || (!(u32) be32_to_cpup(prop)))
 		host->quirks |= SDHCI_QUIRK_BROKEN_CARD_DETECTION;
+
+        prop = of_get_property(np, "high-speed-enable", NULL);
+        if (prop) {
+	  if (!(u32)be32_to_cpup(prop)){
+	    host->quirks2 |= SDHCI_QUIRK2_HIGHSPEED_DISABLED;
+	  }
+        }
 
 	return 0;
 

@@ -20,6 +20,7 @@
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
+#include <linux/mmc/sdhci.h>
 
 #include "core.h"
 #include "sdio_cis.h"
@@ -236,6 +237,7 @@ static void mmc_release_card(struct device *dev)
 struct mmc_card *mmc_alloc_card(struct mmc_host *host, struct device_type *type)
 {
 	struct mmc_card *card;
+	struct sdhci_host *sdhci;
 
 	card = kzalloc(sizeof(struct mmc_card), GFP_KERNEL);
 	if (!card)
@@ -250,6 +252,11 @@ struct mmc_card *mmc_alloc_card(struct mmc_host *host, struct device_type *type)
 	card->dev.release = mmc_release_card;
 	card->dev.type = type;
 
+	sdhci = mmc_priv(host);
+	if (sdhci->quirks2 & SDHCI_QUIRK2_HIGHSPEED_DISABLED)
+	  card->quirks |= MMC_QUIRK_HIGHSPEED_DISABLED;
+
+	
 	return card;
 }
 
