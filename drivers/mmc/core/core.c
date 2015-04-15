@@ -2386,8 +2386,7 @@ void mmc_rescan(struct work_struct *work)
 	}
 
 	mmc_claim_host(host);
-	printk("MDK HACK (reduce range) XXXXX %s:%d:%s\n",  __FUNCTION__,__LINE__, __FILE__);
-	for (i = ARRAY_SIZE(freqs)-1; i < ARRAY_SIZE(freqs); i++) {
+	for (i = 0; i < ARRAY_SIZE(freqs); i++) {
 		if (!mmc_rescan_try_freq(host, max(freqs[i], host->f_min)))
 			break;
 		if (freqs[i] <= host->f_min)
