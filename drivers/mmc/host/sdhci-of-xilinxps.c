@@ -143,7 +143,7 @@ static const struct dev_pm_ops xsdhcips_dev_pm_ops = {
 
 static int sdhci_zynq_probe(struct platform_device *pdev)
 {
-        int ret, cr;
+        int ret;
 	int irq = platform_get_irq(pdev, 0);
 	const void *prop;
 	struct device_node *np = pdev->dev.of_node;
@@ -174,21 +174,13 @@ static int sdhci_zynq_probe(struct platform_device *pdev)
 	else
 		xsdhcips->devclk = clk_get_sys("SDIO1", NULL);
 
-	/* prop = of_get_property(np, "clock-frequency", NULL); */
-        /* if (prop) { */
-	/*   freqval = (u32) be32_to_cpup(prop); */
-	/*   clk_set_rate(xsdhcips->devclk, clk_round_rate(xsdhcips->devclk, freqval)); */
-	/*   printk("XXXXXXX [%s:%d] after c freq %ld\n", __FUNCTION__, __LINE__, clk_get_rate(xsdhcips->devclk)); */
-        /* } */
-
-	cr = clk_get_rate(xsdhcips->devclk);
-	if (cr >= 49999999){
-	  freqval = clk_round_rate(xsdhcips->devclk, cr/3);
-	  clk_set_rate(xsdhcips->devclk, freqval);
-	  printk("MDK HACK (clock speed) XXXXX %s:%d:%s (%d,%d)\n",  __FUNCTION__,__LINE__, __FILE__, 
-		 cr, (u32)clk_get_rate(xsdhcips->devclk));
-	}
-
+	prop = of_get_property(np, "clock-frequency", NULL);
+        if (prop) {
+	  freqval = (u32) be32_to_cpup(prop);
+	  clk_set_rate(xsdhcips->devclk, clk_round_rate(xsdhcips->devclk, freqval));
+	  printk("XXXXXXX [%s:%d] after c freq %ld\n", __FUNCTION__, 
+		 __LINE__, clk_get_rate(xsdhcips->devclk));
+        }
 
 	if (IS_ERR(xsdhcips->devclk)) {
 		dev_err(&pdev->dev, "Device clock not found.\n");
