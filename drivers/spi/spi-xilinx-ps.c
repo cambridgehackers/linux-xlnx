@@ -825,6 +825,8 @@ put_master:
 	kfree(master);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(xspips_probe);
+
 
 /**
  * xspips_remove - Remove method for the SPI driver
@@ -877,6 +879,7 @@ static int xspips_remove(struct platform_device *dev)
 	return 0;
 
 }
+EXPORT_SYMBOL_GPL(xspips_remove);
 
 #ifdef CONFIG_PM_SLEEP
 /**
