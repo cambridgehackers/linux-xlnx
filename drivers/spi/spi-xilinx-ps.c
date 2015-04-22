@@ -911,6 +911,7 @@ static int xspips_suspend(struct device *_dev)
 	dev_dbg(&pdev->dev, "suspend succeeded\n");
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xspips_suspend);
 
 /**
  * xspips_resume - Resume method for the SPI driver
@@ -952,6 +953,7 @@ static int xspips_resume(struct device *_dev)
 	dev_dbg(&pdev->dev, "resume succeeded\n");
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xspips_resume);
 
 static const struct dev_pm_ops xspips_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(xspips_suspend, xspips_resume)
