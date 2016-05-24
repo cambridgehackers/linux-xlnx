@@ -229,7 +229,7 @@ config SOC_BUS
 source "drivers/base/regmap/Kconfig"
 
 config DMA_SHARED_BUFFER
-	bool
+	bool "DMA Shared Buffer"
 	default n
 	select ANON_INODES
 	help
