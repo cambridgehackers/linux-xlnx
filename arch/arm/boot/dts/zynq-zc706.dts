@@ -35,6 +35,16 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+	cpus {
+	     cpu@0 {
+			reg = <0>;
+			operating-points = <
+				/* kHz    uV */
+				800000  1000000
+				333334  1000000
+			>;
+	     };
+	};
 	usb_phy0: phy0 {
 		compatible = "ulpi-phy";
 		#phy-cells = <0>;
