@@ -11,6 +11,19 @@
  * GNU General Public License for more details.
  */
 
+&amba {
+		/* assigned interrupt number corresponds to actual SPI - 32 */
+		connectal@0x6e400000 {
+			compatible = "linux,portal-0.01.a";
+			interrupts = <0 29 4>;
+			interrupt-parent = <&intc>;
+			reg = <0x6e400000 0x10000>;
+			device-name = "connectal";
+			clocks = <&clkc 15>, <&clkc 16>, <&clkc 17>, <&clkc 18>;
+			clock-names = "fclk0", "fclk1", "fclk2", "fclk3";
+		};
+};
+
 &gem0 {
 	compatible = "xlnx,ps7-ethernet-1.00.a";
 	reg = <0xe000b000 0x1000>;
