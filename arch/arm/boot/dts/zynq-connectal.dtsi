@@ -1,0 +1,26 @@
+/*
+ *  Copyright (C) 2016 Connectal Project
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&gem0 {
+	compatible = "xlnx,ps7-ethernet-1.00.a";
+	reg = <0xe000b000 0x1000>;
+	status = "okay";
+	interrupts = <0 22 4>;
+	clocks = <&clkc 13>, <&clkc 30>;
+	clock-names = "ref_clk", "aper_clk";
+	local-mac-address-marker-string = "THE NEXT FIELD IS THE LOCAL MAC ADDRESS FOR UPDATE";
+	local-mac-address = [ 00 E0 0C 00 73 03 ];
+	xlnx,has-mdio = <0x1>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+};
