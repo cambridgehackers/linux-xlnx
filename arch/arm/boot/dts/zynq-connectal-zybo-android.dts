@@ -11,12 +11,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-/include/ "zynq-miniitx100.dts"
+/include/ "zynq-zybo.dts"
 /include/ "zynq-connectal.dtsi"
-
-/ {
-	chosen {
-		bootargs = "console=ttyPS0,115200 noinitrd init=/sbin/init root=/dev/mmcblk0p2 rw ip=:::::eth0:dhcp earlyprintk";
-		stdout-path = "serial0:115200n8";
-	};
-};
+/include/ "zynq-connectal-ramfs.dtsi"
