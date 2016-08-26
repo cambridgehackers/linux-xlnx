@@ -40,7 +40,7 @@ int __initdata rd_doload;	/* 1 = load RAM disk, 0 = don't load */
 int root_mountflags = MS_RDONLY | MS_SILENT;
 static char * __initdata root_device_name;
 static char __initdata saved_root_name[64];
-static int root_wait;
+static int root_wait=1;
 
 dev_t ROOT_DEV;
 
@@ -302,6 +302,7 @@ static int __init rootwait_setup(char *str)
 {
 	if (*str)
 		return 0;
+	printk("\n\nrootwait set to 1\n\n");
 	root_wait = 1;
 	return 1;
 }
@@ -326,6 +327,7 @@ static unsigned int __initdata root_delay;
 static int __init root_delay_setup(char *str)
 {
 	root_delay = simple_strtoul(str, NULL, 0);
+	printk("root_delay=%d seconds\n", root_delay);
 	return 1;
 }
 
@@ -551,7 +553,7 @@ void __init prepare_namespace(void)
 	int is_floppy;
 
 	if (root_delay) {
-		printk(KERN_INFO "Waiting %d sec before mounting root device...\n",
+		printk("Waiting %d sec before mounting root device...\n",
 		       root_delay);
 		ssleep(root_delay);
 	}
@@ -584,11 +586,13 @@ void __init prepare_namespace(void)
 
 	/* wait for any asynchronous scanning to complete */
 	if ((ROOT_DEV == 0) && root_wait) {
-		printk(KERN_INFO "Waiting for root device %s...\n",
+		printk("Waiting for root device %s...\n",
 			saved_root_name);
 		while (driver_probe_done() != 0 ||
-			(ROOT_DEV = name_to_dev_t(saved_root_name)) == 0)
-			msleep(100);
+		       (ROOT_DEV = name_to_dev_t(saved_root_name)) == 0) {
+			printk("Waiting for root device %s...\n", saved_root_name);
+			msleep(250);
+		}
 		async_synchronize_full();
 	}
 
