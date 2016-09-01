@@ -1668,6 +1668,15 @@ static int sdhci_check_ro(struct sdhci_host *host)
 
 	spin_unlock_irqrestore(&host->lock, flags);
 
+	if (is_readonly) {
+		printk("SDHCI_DEVICE_DEAD %d\n", (host->flags & SDHCI_DEVICE_DEAD));
+		if (host->ops->get_ro)
+			printk("ops->get_ro %d\n", host->ops->get_ro(host));
+		printk("PRESENT_STATE WP %d\n", (sdhci_readl(host, SDHCI_PRESENT_STATE) & SDHCI_WRITE_PROTECT));
+		printk("host->quirks %08xx INVERTED_WP %08x\n", host->quirks, SDHCI_QUIRK_INVERTED_WRITE_PROTECT);
+		is_readonly = 0;
+	}
+
 	/* This quirk needs to be replaced by a callback-function later */
 	return host->quirks & SDHCI_QUIRK_INVERTED_WRITE_PROTECT ?
 		!is_readonly : is_readonly;
